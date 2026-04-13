@@ -390,10 +390,15 @@ func (c *Client) GraphQL(ctx context.Context, name string, variables map[string]
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return &AuthError{Msg: "graphql " + name + " rejected session", Status: resp.StatusCode}
+		body, _ := io.ReadAll(resp.Body)
+		return &AuthError{
+			Msg:    fmt.Sprintf("graphql %s rejected session: %s", name, previewBody(body)),
+			Status: resp.StatusCode,
+		}
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return &NotFoundError{Endpoint: name}
+		body, _ := io.ReadAll(resp.Body)
+		return &NotFoundError{Endpoint: name + ": " + previewBody(body)}
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
@@ -404,6 +409,29 @@ func (c *Client) GraphQL(ctx context.Context, name string, variables map[string]
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(result)
+}
+
+// previewBody returns up to 400 bytes of response body with newlines
+// collapsed so it fits on one error line. Used by the GraphQL error
+// path so callers see X's actual rejection reason instead of a
+// generic "rejected session".
+func previewBody(b []byte) string {
+	if len(b) == 0 {
+		return "(empty body)"
+	}
+	const max = 400
+	s := string(b)
+	if len(s) > max {
+		s = s[:max] + "...(truncated)"
+	}
+	// Collapse whitespace runs so the line fits.
+	s = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, s)
+	return s
 }
 
 // REST executes a REST endpoint (v1.1 family), typically for mutations.
@@ -446,10 +474,15 @@ func (c *Client) REST(ctx context.Context, name string, form url.Values, result 
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return &AuthError{Msg: "rest " + name + " rejected session", Status: resp.StatusCode}
+		body, _ := io.ReadAll(resp.Body)
+		return &AuthError{
+			Msg:    fmt.Sprintf("rest %s rejected session: %s", name, previewBody(body)),
+			Status: resp.StatusCode,
+		}
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return &NotFoundError{Endpoint: name}
+		body, _ := io.ReadAll(resp.Body)
+		return &NotFoundError{Endpoint: name + ": " + previewBody(body)}
 	}
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
