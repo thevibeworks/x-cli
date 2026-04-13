@@ -14,7 +14,7 @@ description: >
 ```
 x
 ├── auth
-│   ├── import                            # --from-browser chrome|firefox|brave|edge | --cookie '...' | interactive paste
+│   ├── import                            # auto-detect any local browser (default); --from-browser, --paste, --cookie override
 │   ├── status                            # twid → UserByRestId self-lookup
 │   └── logout                            # remove stored session
 ├── doctor                                # endpoints, session, egress IP, ASN check
@@ -52,18 +52,13 @@ reports a cloud ASN for your egress IP, do not run `x grow` — your session
 normally logs in from residential and X will flag that asymmetry.
 
 ```bash
-# Easiest: auto-read from a local browser (Chrome must be closed on macOS)
-x auth import --from-browser chrome
-x auth import --from-browser firefox      # works while Firefox is running
-x auth import --from-browser brave
+x auth import        # auto-detect any local browser, fall through to paste on miss
+x doctor             # expect: endpoints ok, session ok, egress not-cloud
 
-# Or: paste the cookie header manually
-x auth import           # prompts; paste: auth_token=...; ct0=...; twid=u%3D...
-
-# Or: scripted setups
+# Override only if you need to pin or script:
+x auth import --from-browser firefox
+x auth import --paste
 x auth import --cookie 'auth_token=...; ct0=...; twid=u%3D...'
-
-x doctor                # expect: endpoints ok, session ok, egress not-cloud
 ```
 
 ## Read-only scraping

@@ -18,6 +18,7 @@ import (
 var (
 	authFromBrowser string
 	authCookieFlag  string
+	authForcePaste  bool
 )
 
 var authCmd = &cobra.Command{
@@ -27,41 +28,33 @@ var authCmd = &cobra.Command{
 
 var authImportCmd = &cobra.Command{
 	Use:   "import",
-	Short: "Import session cookies from your browser",
+	Short: "Import session cookies from your browser (auto)",
 	Long: `Import the auth_token and ct0 cookies from an X session.
 
-Three import modes:
+By default, `+"`x auth import`"+` auto-detects: it scans every local
+browser's cookie store on disk (Chrome, Firefox, Brave, Edge, Chromium),
+decrypts the encrypted values with the per-OS Safe Storage key, and
+uses whichever browser has a live x.com session. No flags, no paste.
 
-  1. Auto from a local browser  (no manual paste — recommended)
+Override only if you need to:
 
-       x auth import --from-browser chrome
-       x auth import --from-browser firefox
-       x auth import --from-browser brave
-       x auth import --from-browser edge
+  --from-browser chrome    pin a specific browser instead of auto
+  --cookie 'auth_token=...; ct0=...'    one-shot from a flag (scripted)
+  --paste                  force the interactive paste prompt
 
-     Reads the cookie store directly from disk and decrypts the values
-     using the browser's per-OS Safe Storage key. macOS may prompt
-     once for Keychain access. Chrome must be CLOSED on macOS — it
-     locks the cookie file while running. Firefox usually works while
-     open.
+Notes:
 
-  2. One-shot from a flag  (scripted setups)
+  - macOS prompts once for Keychain access on the first run so we can
+    read the Chrome Safe Storage AES key. The system dialog says "x
+    wants to access key 'Chrome' in your keychain" — that's normal.
+  - Chrome must be CLOSED on macOS because it holds an exclusive lock
+    on the cookie file while running. Firefox is fine while open.
+  - If auto-detect finds no x.com session in any browser (typical in a
+    headless container or fresh machine), x-cli falls back to the
+    interactive paste prompt automatically.
 
-       x auth import --cookie 'auth_token=...; ct0=...; twid=u%3D...'
-
-     Pass the full cookie header on the command line. Visible in
-     shell history; prefer --from-browser or stdin paste for normal use.
-
-  3. Interactive paste  (default — works everywhere)
-
-       x auth import
-       # paste at the prompt: auth_token=...; ct0=...; twid=u%3D...
-
-     Open x.com in your real browser, DevTools → Application → Cookies
-     → https://x.com, copy auth_token + ct0, paste here.
-
-In all three modes, x-cli stores the cookies in your OS keychain via
-go-keyring. They are never written to disk in plaintext.`,
+x-cli stores cookies in your OS keychain via go-keyring. They are
+never written to disk in plaintext.`,
 	RunE: runAuthImport,
 }
 
@@ -79,9 +72,11 @@ var authLogoutCmd = &cobra.Command{
 
 func init() {
 	authImportCmd.Flags().StringVar(&authFromBrowser, "from-browser", "",
-		"read cookies directly from a local browser: chrome | firefox | brave | edge | chromium")
+		"pin to a specific browser: chrome | firefox | brave | edge | chromium")
 	authImportCmd.Flags().StringVar(&authCookieFlag, "cookie", "",
-		"non-interactive: pass the full cookie header as a flag (visible in shell history)")
+		"non-interactive: pass the full cookie header (visible in shell history)")
+	authImportCmd.Flags().BoolVar(&authForcePaste, "paste", false,
+		"skip auto-detect and prompt for an interactive paste")
 
 	authCmd.AddCommand(authImportCmd)
 	authCmd.AddCommand(authStatusCmd)
@@ -151,32 +146,77 @@ func runAuthImport(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// acquireCookieString returns the cookie header string from one of the
-// three import modes (--from-browser, --cookie, interactive paste).
-// The three modes are mutually exclusive and checked in priority order.
+// acquireCookieString resolves the cookie string in priority order:
+//
+//  1. --cookie '...'                  (explicit one-shot)
+//  2. --from-browser <name>           (explicit browser pin)
+//  3. --paste                         (explicit interactive paste)
+//  4. (default) auto-scan all browsers, fall through to paste if empty
+//
+// The default mode is the only one that can SOFT-FAIL: if no browser
+// has an x.com session, we silently drop to the paste prompt without
+// error. Explicit modes hard-fail on their own terms.
 func acquireCookieString() (string, error) {
 	switch {
-	case authFromBrowser != "":
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		res, err := browsercookies.Load(ctx, authFromBrowser, "x.com")
-		if err != nil {
-			return "", fmt.Errorf("--from-browser %s: %w", authFromBrowser, err)
-		}
-		raw := browsercookies.FormatCookieHeader(res.Cookies, cookieNamesWanted)
-		if raw == "" {
-			return "", fmt.Errorf("--from-browser %s: required cookies (auth_token, ct0) not found", authFromBrowser)
-		}
-		cmdutil.Info("loaded %d x.com cookie(s) from %s (%s)",
-			countCookies(res.Cookies, cookieNamesWanted), res.Browser, res.Source)
-		return raw, nil
-
 	case authCookieFlag != "":
 		return strings.TrimSpace(authCookieFlag), nil
 
+	case authForcePaste:
+		return promptCookiePaste()
+
+	case authFromBrowser != "":
+		raw, _, err := readBrowserCookies(authFromBrowser, false)
+		return raw, err
+
 	default:
-		return cmdutil.ReadSecret("Paste cookie header (auth_token=...; ct0=...): ")
+		// Auto-detect: any browser. Falls through to paste on miss.
+		raw, source, err := readBrowserCookies("", true)
+		if err == nil && raw != "" {
+			cmdutil.Success("auto-detected x.com session in %s", source)
+			return raw, nil
+		}
+		if err != nil {
+			cmdutil.Warn("auto-detect: %v", err)
+		}
+		cmdutil.Info("falling back to interactive paste (use --from-browser to pin a specific browser)")
+		return promptCookiePaste()
 	}
+}
+
+// readBrowserCookies runs kooky against the named browser (or all
+// browsers when name == ""). On success returns the formatted cookie
+// header and a friendly source description. On no-cookies-found returns
+// an empty string and a non-nil error if `hardError` is false (caller
+// will treat as soft miss); when `hardError` is true the error is
+// surfaced verbatim.
+func readBrowserCookies(browser string, softMiss bool) (cookieHeader, source string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	res, err := browsercookies.Load(ctx, browser, "x.com")
+	if err != nil {
+		if softMiss {
+			return "", "", err
+		}
+		if browser != "" {
+			return "", "", fmt.Errorf("--from-browser %s: %w", browser, err)
+		}
+		return "", "", err
+	}
+
+	raw := browsercookies.FormatCookieHeader(res.Cookies, cookieNamesWanted)
+	if raw == "" {
+		miss := fmt.Errorf("required cookies (auth_token, ct0) not in %s store — are you logged in?", res.Browser)
+		if softMiss {
+			return "", "", miss
+		}
+		return "", "", miss
+	}
+	return raw, fmt.Sprintf("%s (%s)", res.Browser, res.Source), nil
+}
+
+func promptCookiePaste() (string, error) {
+	return cmdutil.ReadSecret("Paste cookie header (auth_token=...; ct0=...): ")
 }
 
 // countCookies returns how many of the wanted names are present in the

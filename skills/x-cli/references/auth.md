@@ -18,23 +18,20 @@ for sanity checks but not required for the request to succeed.
 
 ## Import flow
 
-Three modes, in order of how quickly you can get going:
-
-### 1. Auto from a local browser (recommended)
-
 ```
-x auth import --from-browser chrome     # must be closed on macOS
-x auth import --from-browser firefox    # works while running
-x auth import --from-browser brave
-x auth import --from-browser edge
-x auth import --from-browser chromium
+x auth import
 ```
 
-x-cli reads the browser's cookie SQLite store on disk and decrypts the
-encrypted values using the OS-specific Safe Storage key. This is exactly
-what Python's `browser_cookie3` / `rookiepy` libraries do, ported to Go
-via `github.com/browserutils/kooky`. You log in once in a real browser;
-x-cli uses the live session.
+That's the whole flow. `x auth import` auto-detects a logged-in x.com
+session in **any** local browser, reads the cookie SQLite store on
+disk, and decrypts the encrypted values using the OS-specific Safe
+Storage key. Same primitive Python's `browser_cookie3` / `rookiepy`
+expose, ported to Go via `github.com/browserutils/kooky`.
+
+Default behaviour: scan Chrome → Firefox → Brave → Edge → Chromium,
+take the first one that has an x.com session, save to keychain, done.
+If nothing is found (headless container, fresh machine, all browsers
+locked), x-cli silently drops to an interactive paste prompt.
 
 Per-OS notes:
 
@@ -43,27 +40,23 @@ Per-OS notes:
   for Chrome's Safe Storage lives in your keychain. **Chrome must be
   closed** because it holds an exclusive lock on the cookie file.
   Firefox is fine while running.
-- **Linux**: needs `libsecret` or `kwallet` running for Chrome family.
-  Falls back to a hardcoded "peanuts" salt on truly headless hosts.
-  Firefox needs no daemon.
+- **Linux**: needs `libsecret` or `kwallet` running for the Chrome
+  family. Falls back to a hardcoded `peanuts` salt on truly headless
+  hosts. Firefox needs no daemon.
 - **Windows**: uses DPAPI; works while the browser is running.
 
-### 2. Manual paste (works everywhere, including headless containers)
+### Override modes
 
-1. Log into x.com in a real browser on a machine you normally use.
-2. DevTools → Application → Cookies → `https://x.com`
-3. Copy the values for `auth_token` and `ct0`.
-4. `x auth import`  → paste `auth_token=...; ct0=...; twid=u%3D...`
-5. `x auth status` should print `session ok — @yourhandle`.
-
-### 3. Scripted (`--cookie`)
+Use these only when auto-detect is wrong for your case:
 
 ```
-x auth import --cookie 'auth_token=...; ct0=...; twid=u%3D...'
+x auth import --from-browser firefox      # pin a specific browser
+x auth import --paste                     # skip auto-detect, prompt
+x auth import --cookie 'auth_token=...'   # scripted bootstrap
 ```
 
-The cookie ends up in your shell history — prefer one of the other
-modes for normal use. Useful for CI bootstrap scripts.
+`--cookie` ends up in shell history — prefer `--from-browser` or the
+default for normal use.
 
 ### What happens after import
 
