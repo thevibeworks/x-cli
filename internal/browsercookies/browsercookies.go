@@ -96,8 +96,21 @@ func Load(ctx context.Context, browser, profile, domain string) (*Result, error)
 	var order []storeKey
 	stores := map[storeKey]*bucket{}
 
-	for c, err := range kooky.TraverseCookies(ctx, kooky.Valid, kooky.DomainHasSuffix(domain)) {
+	// NB: kooky.DomainHasSuffix does a literal string suffix match
+	// against the cookie's Domain attribute. That's dangerously loose —
+	// "yandex.com" literally ends in the string "x.com", so passing
+	// DomainHasSuffix("x.com") to kooky pulls in every cookie from
+	// yandex.com, unix.com, pix.com, nhx.com, and anything else that
+	// happens to end in those three characters.
+	//
+	// We use kooky.Valid (drop expired cookies) and do the registrable-
+	// domain check ourselves in isDomainMatch. No more yandex cookies
+	// leaking into the x.com request.
+	for c, err := range kooky.TraverseCookies(ctx, kooky.Valid) {
 		if err != nil || c == nil || c.Browser == nil {
+			continue
+		}
+		if !isDomainMatch(domain, c.Cookie.Domain) {
 			continue
 		}
 		actualBrowser := c.Browser.Browser()
@@ -162,6 +175,10 @@ func Load(ctx context.Context, browser, profile, domain string) (*Result, error)
 // List enumerates every cookie store that has at least one cookie for
 // the given domain. Used by `x auth browsers` to show the user which
 // (browser, profile) pairs are available before they pin one.
+//
+// Uses the same strict isDomainMatch check as Load so yandex.com,
+// unix.com, pix.com, etc. don't show up as false-positive "x.com
+// sessions".
 func List(ctx context.Context, domain string) ([]Match, error) {
 	if domain == "" {
 		return nil, errors.New("browsercookies: domain required")
@@ -171,8 +188,11 @@ func List(ctx context.Context, domain string) ([]Match, error) {
 	}
 	seen := map[key]int{}
 	var order []key
-	for c, err := range kooky.TraverseCookies(ctx, kooky.Valid, kooky.DomainHasSuffix(domain)) {
+	for c, err := range kooky.TraverseCookies(ctx, kooky.Valid) {
 		if err != nil || c == nil || c.Browser == nil {
+			continue
+		}
+		if !isDomainMatch(domain, c.Cookie.Domain) {
 			continue
 		}
 		k := key{
@@ -195,6 +215,34 @@ func List(ctx context.Context, domain string) ([]Match, error) {
 		})
 	}
 	return out, nil
+}
+
+// isDomainMatch returns true when `cookieDomain` belongs to `want` as a
+// registrable-domain match. Crucially, it is NOT a string suffix match:
+//
+//	isDomainMatch("x.com", "x.com")          → true
+//	isDomainMatch("x.com", ".x.com")         → true
+//	isDomainMatch("x.com", "api.x.com")      → true
+//	isDomainMatch("x.com", ".help.x.com")    → true
+//
+//	isDomainMatch("x.com", "yandex.com")     → false  ← the bug fix
+//	isDomainMatch("x.com", ".yandex.com")    → false
+//	isDomainMatch("x.com", "unix.com")       → false
+//	isDomainMatch("x.com", "pix.com")        → false
+//
+// Without this check, kooky.DomainHasSuffix("x.com") matches every
+// cookie whose domain literally ends in the three characters "x.com"
+// (yande-x.com, uni-x.com, pi-x.com, ADGRX.com, etc.), which is every
+// tracker / ad network / third-party site the user has ever visited.
+// Those get stuffed into the Cookie: header for the real x.com request
+// and X's gateway 403s the resulting jumble.
+func isDomainMatch(want, cookieDomain string) bool {
+	if cookieDomain == "" || want == "" {
+		return false
+	}
+	d := strings.ToLower(strings.TrimPrefix(cookieDomain, "."))
+	w := strings.ToLower(want)
+	return d == w || strings.HasSuffix(d, "."+w)
 }
 
 // profileMatches returns true when `want` (the user-supplied --profile

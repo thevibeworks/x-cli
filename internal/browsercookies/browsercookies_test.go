@@ -84,6 +84,44 @@ func TestListEmptyDomain(t *testing.T) {
 	}
 }
 
+func TestIsDomainMatch(t *testing.T) {
+	cases := []struct {
+		want, cookie string
+		expect       bool
+	}{
+		// Exact and leading-dot match
+		{"x.com", "x.com", true},
+		{"x.com", ".x.com", true},
+		// Subdomains
+		{"x.com", "api.x.com", true},
+		{"x.com", ".api.x.com", true},
+		{"x.com", "help.x.com", true},
+		// Case insensitivity
+		{"x.com", "X.COM", true},
+		{"x.com", ".X.COM", true},
+		// The bug: yandex.com ends in the literal string "x.com" but is
+		// NOT a subdomain of x.com. MUST NOT match.
+		{"x.com", "yandex.com", false},
+		{"x.com", ".yandex.com", false},
+		{"x.com", "unix.com", false},
+		{"x.com", "pix.com", false},
+		{"x.com", "foo.unix.com", false},
+		// Totally unrelated
+		{"x.com", "twitter.com", false},
+		{"x.com", "google.com", false},
+		// Empty inputs
+		{"x.com", "", false},
+		{"", "x.com", false},
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		if got := isDomainMatch(tc.want, tc.cookie); got != tc.expect {
+			t.Errorf("isDomainMatch(%q, %q) = %v, want %v",
+				tc.want, tc.cookie, got, tc.expect)
+		}
+	}
+}
+
 func TestProfileMatches(t *testing.T) {
 	cases := []struct {
 		want   string

@@ -204,29 +204,30 @@ func (c *Client) request(ctx context.Context, method, rawURL string, body io.Rea
 	return nil, lastErr
 }
 
+// applyHeaders builds the request header set that X's GraphQL/REST
+// gateways accept.
+//
+// We deliberately mirror XActions' "tool/SDK" header profile, NOT a
+// modern browser's profile. Real browsers send sec-ch-ua, sec-fetch-*,
+// Origin, Referer, and X validates those against TLS fingerprint and
+// HTTP/2 frame ordering. With Go's stdlib net/http we cannot match
+// Chrome's TLS or H2 layer, so declaring browser-like headers makes
+// X catch the lie and 403 the request. The bare bearer+cookies+csrf
+// path that XActions and twikit use treats us as a tool, accepts the
+// non-browser TLS fingerprint, and works.
+//
+// If a future commit wires utls + bogdanfinn/tls-client to fully
+// impersonate Chrome, we can switch to the browser header profile
+// then. Until then: keep this minimal.
 func (c *Client) applyHeaders(req *http.Request, opts requestOpts) {
 	bearer := c.endpoints.Bearer
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-twitter-active-user", "yes")
 	req.Header.Set("x-twitter-client-language", "en")
-
-	// Origin + Referer are required for X's same-origin CSRF check.
-	// Without them the gateway treats the call as cross-site and 403s
-	// authenticated reads. Real browsers add these automatically; Go's
-	// net/http does not, so we set them ourselves.
-	req.Header.Set("Origin", "https://x.com")
-	req.Header.Set("Referer", "https://x.com/")
-
-	// Client-hint headers matched to the UA. Pinned, not rotated per-request.
-	req.Header.Set("sec-ch-ua", `"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"`)
-	req.Header.Set("sec-ch-ua-mobile", "?0")
-	req.Header.Set("sec-ch-ua-platform", `"macOS"`)
-	req.Header.Set("sec-fetch-dest", "empty")
-	req.Header.Set("sec-fetch-mode", "cors")
-	req.Header.Set("sec-fetch-site", "same-origin")
 
 	if opts.authenticated {
 		c.sessionMu.RLock()
@@ -239,10 +240,6 @@ func (c *Client) applyHeaders(req *http.Request, opts requestOpts) {
 			req.Header.Set("Cookie", buildCookieHeader(cookies))
 		}
 		c.sessionMu.RUnlock()
-	}
-
-	if req.Body != nil && req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
 	}
 
 	for k, v := range opts.extraHeaders {

@@ -55,11 +55,18 @@ func TestApplyHeadersUnauthenticated(t *testing.T) {
 	if got := captured.Get("User-Agent"); !strings.Contains(got, "Chrome") {
 		t.Errorf("User-Agent = %q", got)
 	}
-	if got := captured.Get("sec-ch-ua"); got == "" {
-		t.Errorf("missing sec-ch-ua client hint")
+	if got := captured.Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q (XActions sends application/json on every request)", got)
 	}
-	if got := captured.Get("sec-fetch-dest"); got != "empty" {
-		t.Errorf("sec-fetch-dest = %q", got)
+	if got := captured.Get("x-twitter-active-user"); got != "yes" {
+		t.Errorf("x-twitter-active-user = %q", got)
+	}
+	// We DELIBERATELY do NOT send browser-fingerprint headers — see the
+	// rationale comment on applyHeaders.
+	for _, name := range []string{"sec-ch-ua", "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site", "Origin", "Referer"} {
+		if got := captured.Get(name); got != "" {
+			t.Errorf("%s should not be sent (browser-fingerprint header), got %q", name, got)
+		}
 	}
 	if got := captured.Get("x-csrf-token"); got != "" {
 		t.Errorf("unauthenticated request should not carry x-csrf-token, got %q", got)
