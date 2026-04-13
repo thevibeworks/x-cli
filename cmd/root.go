@@ -20,6 +20,7 @@ var (
 	endpointsFile string
 	jsonOut       bool
 	verbose       bool
+	useHTTP       bool
 )
 
 var rootCmd = &cobra.Command{
@@ -53,6 +54,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&endpointsFile, "endpoints", "", "endpoints.yaml (default $HOME/.config/x-cli/endpoints.yaml, then ./endpoints.yaml)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON on stdout")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose logging to stderr")
+	rootCmd.PersistentFlags().BoolVar(&useHTTP, "http", false, "force the http+utls transport (skip the headless Chrome path; needed when Chrome is not installed)")
 }
 
 func initConfig() {
@@ -165,7 +167,8 @@ func newClient(ctx context.Context) (*api.Client, error) {
 				Name:     sess.Name,
 			},
 		},
-		Verbose: verbose,
+		Verbose:    verbose,
+		UseBrowser: !useHTTP,
 	})
 	return client, nil
 }

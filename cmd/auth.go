@@ -154,21 +154,28 @@ func runAuthImport(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	client := api.New(api.Options{
-		Endpoints: eps,
-		Throttle:  api.NewThrottle(api.Defaults{}),
-		Session:   api.Session{Cookies: cookies},
-		Verbose:   verbose,
+		Endpoints:  eps,
+		Throttle:   api.NewThrottle(api.Defaults{}),
+		Session:    api.Session{Cookies: cookies},
+		Verbose:    verbose,
+		UseBrowser: !useHTTP,
 	})
 
-	// Tight timeout for the import-time liveness check. We want
-	// snappy failure on a stuck connection, not 90 seconds of silence.
-	ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
+	// Generous timeout for the verify call. The browser path adds
+	// a one-time ~1-2s Chrome startup cost on first run; the http
+	// path is much faster but we still want to give X a few seconds
+	// to respond. 60s is comfortable for both.
+	ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 	defer cancel()
 
-	cmdutil.Info("verifying session against X (UserByRestId via twid)...")
+	if !useHTTP {
+		cmdutil.Info("verifying session via headless Chrome (--http to use the http+utls path)...")
+	} else {
+		cmdutil.Info("verifying session via http+utls (UserByRestId)...")
+	}
 	user, err := client.VerifyCredentials(ctx)
 	if err != nil {
-		return fmt.Errorf("verify session: %w (your cookies may be stale or X is unreachable)", err)
+		return fmt.Errorf("verify session: %w (your cookies may be stale or Chrome could not start)", err)
 	}
 
 	path, err := sessionFilePath()

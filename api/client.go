@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thevibeworks/x-cli/internal/chromebrowser"
 	"github.com/thevibeworks/x-cli/internal/tlsprint"
 )
 
@@ -55,25 +56,36 @@ type Options struct {
 	Session    Session
 	UserAgent  string
 	Verbose    bool
+
+	// UseBrowser routes requests through a headless Chrome via
+	// chromedp instead of the http+utls transport. Use this for
+	// endpoints behind Cloudflare Bot Management (the entire
+	// /i/api/graphql/* path on x.com today). Ignored when
+	// HTTPClient is set explicitly.
+	UseBrowser bool
 }
 
 func New(opts Options) *Client {
 	if opts.HTTPClient == nil {
-		// The default HTTP client is wired with a uTLS Chrome 120
-		// ClientHelloID round-tripper. x.com's /i/api/graphql/* path
-		// is behind Cloudflare Bot Management which JA3-fingerprints
-		// clients; Go's stdlib TLS gets flagged as non-browser and
-		// served a challenge page. Impersonating Chrome at the TLS
-		// handshake defeats that. See internal/tlsprint/ for detail.
-		//
-		// 15s per request is generous for a single GraphQL call. With
-		// the (lowered) default retry count of 1, total worst-case
-		// wall-clock for one client.GraphQL is ~30s — short enough
-		// that an interactive user does not assume the program is
-		// hung.
-		opts.HTTPClient = &http.Client{
-			Transport: tlsprint.NewChromeTransport(),
-			Timeout:   15 * time.Second,
+		switch {
+		case opts.UseBrowser:
+			// Route every request through a real headless Chrome.
+			// Slower (1-2s startup, then 200-500ms per call) but
+			// passes Cloudflare Bot Management because it IS Chrome.
+			// See internal/chromebrowser for the full rationale.
+			opts.HTTPClient = &http.Client{
+				Transport: chromebrowser.NewTransport(),
+				Timeout:   60 * time.Second,
+			}
+		default:
+			// HTTP path with uTLS Chrome 120 ClientHelloID. Lighter
+			// weight, no Chrome dependency, but only fakes the TLS
+			// handshake — Cloudflare's deeper layers (HTTP/2 frame
+			// ordering, JS challenges) can still detect us.
+			opts.HTTPClient = &http.Client{
+				Transport: tlsprint.NewChromeTransport(),
+				Timeout:   15 * time.Second,
+			}
 		}
 	}
 	if opts.UserAgent == "" {
