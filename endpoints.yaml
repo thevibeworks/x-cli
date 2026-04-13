@@ -1,49 +1,76 @@
 # X internal endpoint map.
 #
-# These are reverse-engineered from X's web client. Query IDs rotate whenever
-# X ships a new web bundle. When a call starts returning 404 or a schema
-# mismatch, update the queryId here and release a patch.
+# Captured from the live x.com web client. X rotates these query IDs
+# whenever they ship a new web bundle. When a call starts returning 404
+# or a "feature error", update this file (or drop a fresh copy at
+# ~/.config/x-cli/endpoints.yaml) — no rebuild required.
 #
-# Cross-referenced from:
+# Last refresh: 2026-04-13, captured directly from the logged-in web
+# client via Chrome MCP (Network panel walk over /jack, /jack/following,
+# /jack/verified_followers, /search?q=golang, and a tweet detail page).
+#
+# References:
 #   - d60/twikit (MIT) — twikit/client/gql.py
 #   - the-convocation/twitter-scraper (MIT) — src/api-data.ts
 #
-# This file is data, not code, on purpose. You can ship updates without a
-# rebuild by replacing it at ~/.config/x-cli/endpoints.yaml.
+# This file is data, not code, on purpose. You can ship updates without
+# a rebuild by replacing it at ~/.config/x-cli/endpoints.yaml.
 
 bases:
   graphql: https://x.com/i/api/graphql
   rest: https://x.com/i/api
   api: https://api.x.com
 
-# Public bearer token embedded in X's web bundle. Same token used by twikit
-# and twitter-scraper. Rotate if X revokes it.
+# Public bearer token embedded in X's web bundle. Same token used by
+# twikit and twitter-scraper. Rotate if X revokes it.
 bearer: "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
-# GraphQL features blob. Must match what the server expects at the time of
-# the captured bundle. If the server rejects a query with a feature error,
-# append the missing key here.
+# GraphQL features blob captured from the live web client. Must match
+# what the gateway expects at the time of the bundle. If the server
+# rejects a query with a "feature error", append the missing key here.
 features:
-  responsive_web_graphql_exclude_directive_enabled: true
+  rweb_video_screen_enabled: false
+  profile_label_improvements_pcf_label_in_post_enabled: true
+  responsive_web_profile_redirect_enabled: false
+  rweb_tipjar_consumption_enabled: false
   verified_phone_label_enabled: false
   creator_subscriptions_tweet_preview_api_enabled: true
   responsive_web_graphql_timeline_navigation_enabled: true
   responsive_web_graphql_skip_user_profile_image_extensions_enabled: false
+  premium_content_api_read_enabled: false
+  communities_web_enable_tweet_community_results_fetch: true
   c9s_tweet_anatomy_moderator_badge_enabled: true
-  tweetypie_unmention_optimization_enabled: true
+  responsive_web_grok_analyze_button_fetch_trends_enabled: false
+  responsive_web_grok_analyze_post_followups_enabled: true
+  responsive_web_jetfuel_frame: true
+  responsive_web_grok_share_attachment_enabled: true
+  responsive_web_grok_annotations_enabled: true
+  articles_preview_enabled: true
   responsive_web_edit_tweet_api_enabled: true
   graphql_is_translatable_rweb_tweet_is_translatable_enabled: true
   view_counts_everywhere_api_enabled: true
   longform_notetweets_consumption_enabled: true
   responsive_web_twitter_article_tweet_consumption_enabled: true
-  tweet_awards_web_tipping_enabled: false
+  content_disclosure_indicator_enabled: true
+  content_disclosure_ai_generated_indicator_enabled: true
+  responsive_web_grok_show_grok_translated_post: true
+  responsive_web_grok_analysis_button_from_backend: true
+  post_ctas_fetch_enabled: true
   freedom_of_speech_not_reach_fetch_enabled: true
   standardized_nudges_misinfo: true
   tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true
   longform_notetweets_rich_text_read_enabled: true
-  longform_notetweets_inline_media_enabled: true
-  responsive_web_media_download_video_enabled: false
+  longform_notetweets_inline_media_enabled: false
+  responsive_web_grok_image_annotation_enabled: true
+  responsive_web_grok_imagine_annotation_enabled: true
+  responsive_web_grok_community_note_auto_translation_is_enabled: true
   responsive_web_enhance_cards_enabled: false
+  hidden_profile_subscriptions_enabled: true
+  subscriptions_verification_info_is_identity_verified_enabled: true
+  subscriptions_verification_info_verified_since_enabled: true
+  highlights_tweets_tab_ui_enabled: true
+  responsive_web_twitter_article_notes_tab_enabled: true
+  subscriptions_feature_can_gift_premium: true
 
 # GraphQL queries and mutations.
 #
@@ -53,19 +80,19 @@ features:
 #   kind:   read | mutation
 graphql:
   UserByScreenName:
-    queryId: NimuplG1OB7Fd2btCLdBOw
+    queryId: IGgvgiOx4QZndDHuD3x9TQ
     operationName: UserByScreenName
     kind: read
     rps: 0.5
     burst: 2
   UserByRestId:
-    queryId: tD8zKvQzwY3kdx5yz6YmOw
+    queryId: VQfQ9wwYdk6j_u2O4vt64Q
     operationName: UserByRestId
     kind: read
     rps: 0.5
     burst: 2
   UserTweets:
-    queryId: QWF3SzpHmykQHsQMixG0cg
+    queryId: x3B_xLqC0yZawOB7WQhaVQ
     operationName: UserTweets
     kind: read
     rps: 0.3
@@ -83,7 +110,7 @@ graphql:
     rps: 0.3
     burst: 2
   TweetDetail:
-    queryId: U0HTv-bAWTBYylwEMT7x5A
+    queryId: rU08O-YiXdr0IZfE7qaUMg
     operationName: TweetDetail
     kind: read
     rps: 0.5
@@ -95,7 +122,7 @@ graphql:
     rps: 0.5
     burst: 2
   SearchTimeline:
-    queryId: flaR-PUMshxFWZWPNpq4zA
+    queryId: pCd62NDD9dlCDgEGgEVHMg
     operationName: SearchTimeline
     kind: read
     rps: 0.3
@@ -106,8 +133,14 @@ graphql:
     kind: read
     rps: 0.2
     burst: 1
+  BlueVerifiedFollowers:
+    queryId: wlnE16ojgADYiHEqMzR3sw
+    operationName: BlueVerifiedFollowers
+    kind: read
+    rps: 0.2
+    burst: 1
   Following:
-    queryId: 2vUj-_Ek-UmBVDNtd8OnQA
+    queryId: vWCjN9gcTJiXzzMPR5Oxzw
     operationName: Following
     kind: read
     rps: 0.2
@@ -125,13 +158,13 @@ graphql:
     rps: 0.2
     burst: 1
 
-# REST v1.1 endpoints used for follow/unfollow, etc.
-# Budgets here are mutation ceilings.
+# REST v1.1 endpoints used for follow/unfollow.
+#
+# NOTE: /1.1/account/verify_credentials.json was removed sometime
+# before April 2026. x-cli now uses UserByRestId (above) with the
+# `twid` cookie for the auth liveness check — see api/auth.go
+# VerifyCredentials.
 rest:
-  verifyCredentials:
-    path: /1.1/account/verify_credentials.json
-    method: GET
-    kind: read
   friendshipsCreate:
     path: /1.1/friendships/create.json
     method: POST

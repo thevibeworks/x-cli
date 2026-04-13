@@ -41,13 +41,41 @@ make build
 
 ## Auth
 
-Log into x.com in your real browser, DevTools → Application → Cookies, copy
+Three ways to import the session:
+
+**1. Auto from a local browser (recommended)**
+
+```
+x auth import --from-browser chrome
+x auth import --from-browser firefox
+x auth import --from-browser brave
+x auth import --from-browser edge
+```
+
+x-cli reads the browser's cookie SQLite store on disk and decrypts
+the values using the per-OS Safe Storage key (macOS Keychain on Mac,
+libsecret/kwallet on Linux, DPAPI on Windows). Same mechanism Python's
+`browser_cookie3` and `rookiepy` use. Chrome must be **closed** on macOS
+because it locks the cookie file; Firefox and Linux Chrome usually work
+while open. macOS will prompt once for Keychain access on the first run.
+
+**2. Manual paste**
+
+Open x.com in your real browser, DevTools → Application → Cookies, copy
 `auth_token` and `ct0`, then:
 
 ```
 x auth import
 # paste: auth_token=...; ct0=...; twid=u%3D...
 ```
+
+**3. Scripted (CI / setup scripts)**
+
+```
+x auth import --cookie 'auth_token=...; ct0=...; twid=u%3D...'
+```
+
+(Visible in shell history — prefer `--from-browser` for normal use.)
 
 **Where the cookie lives.** x-cli tries the OS keychain first (`go-keyring`:
 Keychain on macOS, libsecret on Linux, Credential Manager on Windows). If the

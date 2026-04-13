@@ -78,9 +78,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	} else {
 		line := fmt.Sprintf("egress: %s  (%s  %s)", ip, asn, org)
 		if isCloudASN(asn, org) {
-			cmdutil.Warn(line + "  ← cloud ASN; mutations are high-risk from this IP")
+			cmdutil.Warn("%s  ← cloud ASN; mutations are high-risk from this IP", line)
 		} else {
-			cmdutil.Success(line)
+			cmdutil.Success("%s", line)
 		}
 	}
 

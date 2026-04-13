@@ -1,6 +1,78 @@
 package api
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+// TestExtractProfileLiveJackFixture runs the parser against an actual
+// UserByScreenName response captured from x.com on 2026-04-13 (logged in,
+// modern web client). This is the regression that proves x-cli's parser
+// works against today's real API shape — not just the synthetic fixtures
+// further down.
+//
+// If x.com rotates the response shape and this test fails, capture a
+// fresh response into the same fixture file and update the assertions.
+func TestExtractProfileLiveJackFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/userbyscreenname_jack_2026_04.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	p := extractProfile(m)
+	if p == nil {
+		t.Fatal("extractProfile returned nil on live fixture")
+	}
+	want := &Profile{
+		ID:          "12",
+		RestID:      "12",
+		ScreenName:  "jack",
+		Name:        "jack",
+		Description: "no state is the best state",
+		URL:         "https://t.co/ZEpOg6rn5L",
+		Avatar:      "https://pbs.twimg.com/profile_images/1661201415899951105/azNjKOSH_normal.jpg",
+		Followers:   7003649,
+		Following:   3,
+		Tweets:      30433,
+		Verified:    true,
+		Protected:   false,
+		CreatedAt:   "Tue Mar 21 20:50:14 +0000 2006",
+	}
+	if p.ScreenName != want.ScreenName {
+		t.Errorf("ScreenName = %q, want %q (the legacy → core migration broke)", p.ScreenName, want.ScreenName)
+	}
+	if p.Name != want.Name {
+		t.Errorf("Name = %q, want %q", p.Name, want.Name)
+	}
+	if p.RestID != want.RestID {
+		t.Errorf("RestID = %q, want %q", p.RestID, want.RestID)
+	}
+	if p.Followers != want.Followers {
+		t.Errorf("Followers = %d, want %d", p.Followers, want.Followers)
+	}
+	if p.Following != want.Following {
+		t.Errorf("Following = %d, want %d", p.Following, want.Following)
+	}
+	if p.Tweets != want.Tweets {
+		t.Errorf("Tweets = %d, want %d", p.Tweets, want.Tweets)
+	}
+	if p.Description != want.Description {
+		t.Errorf("Description = %q, want %q", p.Description, want.Description)
+	}
+	if p.Avatar != want.Avatar {
+		t.Errorf("Avatar = %q, want %q (avatar.image_url path broke)", p.Avatar, want.Avatar)
+	}
+	if !p.Verified {
+		t.Error("Verified should be true (is_blue_verified path broke)")
+	}
+	if p.CreatedAt != want.CreatedAt {
+		t.Errorf("CreatedAt = %q, want %q", p.CreatedAt, want.CreatedAt)
+	}
+}
 
 func TestExtractProfileFull(t *testing.T) {
 	raw := map[string]any{

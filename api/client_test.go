@@ -329,16 +329,21 @@ func TestRateLimit429WithReset(t *testing.T) {
 }
 
 func TestVerifyCredentialsSuccess(t *testing.T) {
+	// Modern path: VerifyCredentials reads the `twid` cookie, parses
+	// the user ID, and calls UserByRestId. The fake server responds
+	// with a modern-shape user (core.screen_name + core.name).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/1.1/account/verify_credentials.json" {
-			t.Errorf("path = %q", r.URL.Path)
+		if !strings.Contains(r.URL.Path, "/uid_qid/UserByRestId") {
+			t.Errorf("unexpected path %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id_str":"123","screen_name":"jack","name":"Jack Dorsey"}`))
+		_, _ = w.Write([]byte(`{"data":{"user":{"result":{"__typename":"User","rest_id":"123","is_blue_verified":true,"core":{"screen_name":"jack","name":"Jack Dorsey","created_at":"Tue Mar 21 20:50:14 +0000 2006"},"legacy":{"description":"hi","followers_count":7000000}}}}}`))
 	}))
 	defer srv.Close()
 
-	c := newTestClient(t, srv.URL, nil, map[string]string{"auth_token": "x", "ct0": "y"})
+	c := newTestClient(t, srv.URL, map[string]GraphQLEndpoint{
+		"UserByRestId": {QueryID: "uid_qid", OperationName: "UserByRestId", Kind: "read", RPS: 100, Burst: 10},
+	}, map[string]string{"auth_token": "x", "ct0": "y", "twid": "u%3D123"})
 
 	u, err := c.VerifyCredentials(context.Background())
 	if err != nil {
@@ -350,23 +355,40 @@ func TestVerifyCredentialsSuccess(t *testing.T) {
 }
 
 func TestVerifyCredentialsUnauthorized(t *testing.T) {
+	// Server returns 401 on UserByRestId; VerifyCredentials must surface
+	// it as *AuthError, not a raw GraphQL error.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
 	}))
 	defer srv.Close()
 
-	c := newTestClient(t, srv.URL, nil, map[string]string{"auth_token": "bad", "ct0": "bad"})
+	c := newTestClient(t, srv.URL, map[string]GraphQLEndpoint{
+		"UserByRestId": {QueryID: "uid_qid", OperationName: "UserByRestId", Kind: "read", RPS: 100, Burst: 10},
+	}, map[string]string{"auth_token": "bad", "ct0": "bad", "twid": "u%3D123"})
 
 	_, err := c.VerifyCredentials(context.Background())
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	ae, ok := err.(*AuthError)
-	if !ok {
-		t.Fatalf("want *AuthError, got %T", err)
+	if _, ok := err.(*AuthError); !ok {
+		t.Fatalf("want *AuthError, got %T: %v", err, err)
 	}
-	if ae.Status != 401 {
-		t.Errorf("AuthError.Status = %d", ae.Status)
+}
+
+func TestParseTwidUserID(t *testing.T) {
+	cases := map[string]string{
+		"u%3D2017830703355072513": "2017830703355072513",
+		"u=2017830703355072513":   "2017830703355072513",
+		"u%3D12":                  "12",
+		"":                         "",
+		"garbage":                  "",
+		"u%3Dnot-a-number":        "",
+		"u%3D":                     "",
+	}
+	for in, want := range cases {
+		if got := parseTwidUserID(in); got != want {
+			t.Errorf("parseTwidUserID(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

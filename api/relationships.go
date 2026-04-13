@@ -49,6 +49,9 @@ type UserSummary struct {
 
 // ParseUserSummary projects a raw GraphQL user_results.result object.
 // Returns nil for `UserUnavailable` typename.
+//
+// Defensive projection: reads `core.*` first (modern shape), falls back
+// to `legacy.*` (XActions-vintage). Same rule as extractProfile.
 func ParseUserSummary(raw any) *UserSummary {
 	rm, ok := raw.(map[string]any)
 	if !ok || rm == nil {
@@ -57,25 +60,26 @@ func ParseUserSummary(raw any) *UserSummary {
 	if getString(rm, "__typename") == "UserUnavailable" {
 		return nil
 	}
-	legacy := getMap(rm, "legacy")
 
-	avatar := getString(legacy, "profile_image_url_https")
+	avatar := firstString(rm, "avatar/image_url", "legacy/profile_image_url_https")
 	if avatar != "" {
-		// X serves _normal (48x48) by default; bump to 400x400 for usable size.
+		// X serves _normal (48x48) by default for legacy URLs;
+		// bump to _400x400 for usable size. Modern `avatar.image_url`
+		// already points at the larger asset, so the replace is a no-op.
 		avatar = strings.Replace(avatar, "_normal", "_400x400", 1)
 	}
 
 	return &UserSummary{
 		ID:        getString(rm, "rest_id"),
-		Username:  getString(legacy, "screen_name"),
-		Name:      getString(legacy, "name"),
-		Bio:       getString(legacy, "description"),
-		Verified:  getBool(rm, "is_blue_verified") || getBool(legacy, "verified"),
-		Protected: getBool(legacy, "protected"),
+		Username:  firstString(rm, "core/screen_name", "legacy/screen_name"),
+		Name:      firstString(rm, "core/name", "legacy/name"),
+		Bio:       firstString(rm, "legacy/description"),
+		Verified:  getBool(rm, "is_blue_verified") || firstBool(rm, "legacy/verified"),
+		Protected: firstBool(rm, "privacy/protected", "legacy/protected"),
 		Avatar:    avatar,
-		Followers: getInt(legacy, "followers_count"),
-		Following: getInt(legacy, "friends_count"),
-		Tweets:    getInt(legacy, "statuses_count"),
+		Followers: firstInt(rm, "legacy/followers_count"),
+		Following: firstInt(rm, "legacy/friends_count"),
+		Tweets:    firstInt(rm, "legacy/statuses_count"),
 	}
 }
 

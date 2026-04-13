@@ -2,8 +2,7 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -60,32 +59,89 @@ func RequireAuthCookies(cookies map[string]string) error {
 	return nil
 }
 
-// VerifyCredentials hits /1.1/account/verify_credentials.json and returns the
-// user if the session is alive, or an AuthError otherwise.
+// VerifyCredentials confirms the imported session is alive and returns
+// the logged-in user.
+//
+// X removed the legacy /1.1/account/verify_credentials.json endpoint
+// (returns 404 as of April 2026). x-cli reads the `twid` cookie that
+// the user pasted, parses the numeric user id out of it, and calls
+// UserByRestId to confirm the session is alive AND fetch identity in
+// one round trip. Falls back to a UserByScreenName "twitter" probe if
+// `twid` is missing — that's the cheapest "is this cookie usable at
+// all" sanity check we have without it.
 func (c *Client) VerifyCredentials(ctx context.Context) (*User, error) {
-	url := c.endpoints.Bases.REST + "/1.1/account/verify_credentials.json"
-	resp, err := c.request(ctx, "GET", url, nil, requestOpts{authenticated: true, endpointName: "verifyCredentials"})
+	c.sessionMu.RLock()
+	cookies := c.session.Cookies
+	twidRaw := ""
+	if cookies != nil {
+		twidRaw = cookies["twid"]
+	}
+	c.sessionMu.RUnlock()
+
+	if userID := parseTwidUserID(twidRaw); userID != "" {
+		p, err := c.GetProfileByID(ctx, userID)
+		if err != nil {
+			return nil, normaliseAuthError(err)
+		}
+		u := &User{
+			ID:       p.RestID,
+			Username: p.ScreenName,
+			Name:     p.Name,
+		}
+		c.sessionMu.Lock()
+		c.session.User = u
+		c.sessionMu.Unlock()
+		return u, nil
+	}
+
+	// No twid: probe with a known account so we still detect a dead
+	// cookie, but we cannot return identity in this branch.
+	if _, err := c.GetProfile(ctx, "twitter"); err != nil {
+		return nil, normaliseAuthError(err)
+	}
+	return nil, &AuthError{Msg: "session is alive but `twid` cookie missing — re-import a complete cookie string"}
+}
+
+// parseTwidUserID extracts the numeric user ID from a `twid` cookie value.
+// Twitter encodes it as `u%3D<NNN>` (URL-encoded `u=NNN`).
+//
+// Examples:
+//
+//	"u%3D2017830703355072513" → "2017830703355072513"
+//	"u=2017830703355072513"   → "2017830703355072513"
+//	""                        → ""
+func parseTwidUserID(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	decoded, err := url.QueryUnescape(raw)
 	if err != nil {
-		return nil, err
+		decoded = raw
 	}
-	defer resp.Body.Close()
+	if !strings.HasPrefix(decoded, "u=") {
+		return ""
+	}
+	id := decoded[2:]
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return id
+}
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, &AuthError{Msg: "session invalid or expired", Status: resp.StatusCode}
+// normaliseAuthError maps domain errors to AuthError when the underlying
+// failure looks like a session problem. NotFoundError on a self-lookup
+// almost always means the session id is no longer valid.
+func normaliseAuthError(err error) error {
+	if err == nil {
+		return nil
 	}
-	if resp.StatusCode >= 400 {
-		return nil, &APIError{Endpoint: "verifyCredentials", Status: resp.StatusCode}
+	switch e := err.(type) {
+	case *AuthError:
+		return e
+	case *NotFoundError:
+		return &AuthError{Msg: "session invalid or expired (self-lookup not found)"}
 	}
-
-	var u User
-	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
-		return nil, err
-	}
-	if u.ID == "" {
-		return nil, &AuthError{Msg: "verify_credentials returned empty user"}
-	}
-	c.sessionMu.Lock()
-	c.session.User = &u
-	c.sessionMu.Unlock()
-	return &u, nil
+	return err
 }

@@ -132,3 +132,80 @@ func copyMap(m map[string]any) map[string]any {
 	}
 	return out
 }
+
+// firstString returns the first non-empty string at any of the given
+// dot-paths in the root. This is the defensive projection helper used
+// across the parsers — Twitter has shipped at least two response shapes
+// for the same field (e.g., user.screen_name now lives at `core.screen_name`
+// but used to live at `legacy.screen_name`). Reading both keeps x-cli
+// working across the rotation.
+//
+// Each `paths` argument is a slash-delimited path like
+// "core/screen_name" or "legacy/profile_image_url_https".
+func firstString(root map[string]any, paths ...string) string {
+	for _, p := range paths {
+		keys := splitPath(p)
+		v := walkPath(root, keys...)
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// firstInt is the int counterpart of firstString.
+func firstInt(root map[string]any, paths ...string) int {
+	for _, p := range paths {
+		keys := splitPath(p)
+		v := walkPath(root, keys...)
+		switch x := v.(type) {
+		case float64:
+			return int(x)
+		case int:
+			return x
+		case int64:
+			return int(x)
+		case string:
+			n := 0
+			ok := len(x) > 0
+			for _, r := range x {
+				if r < '0' || r > '9' {
+					ok = false
+					break
+				}
+				n = n*10 + int(r-'0')
+			}
+			if ok {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+// firstBool returns the first true value at any of the given paths.
+func firstBool(root map[string]any, paths ...string) bool {
+	for _, p := range paths {
+		keys := splitPath(p)
+		if v, ok := walkPath(root, keys...).(bool); ok && v {
+			return true
+		}
+	}
+	return false
+}
+
+func splitPath(p string) []string {
+	if p == "" {
+		return nil
+	}
+	out := make([]string, 0, 4)
+	start := 0
+	for i := 0; i < len(p); i++ {
+		if p[i] == '/' {
+			out = append(out, p[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, p[start:])
+	return out
+}

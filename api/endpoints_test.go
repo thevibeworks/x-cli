@@ -161,10 +161,16 @@ func TestLoadShippedEndpoints(t *testing.T) {
 	if _, ok := m.REST["friendshipsCreate"]; !ok {
 		t.Error("shipped endpoints.yaml missing friendshipsCreate")
 	}
-	if _, ok := m.REST["verifyCredentials"]; !ok {
-		t.Error("shipped endpoints.yaml missing verifyCredentials")
+	if _, ok := m.REST["friendshipsDestroy"]; !ok {
+		t.Error("shipped endpoints.yaml missing friendshipsDestroy")
 	}
 	if m.Bearer == "" {
 		t.Error("shipped endpoints.yaml has empty bearer")
+	}
+	// verifyCredentials.json was removed by X — the shipped YAML
+	// must NOT carry it any more (the auth liveness check now goes
+	// through UserByRestId).
+	if _, ok := m.REST["verifyCredentials"]; ok {
+		t.Error("shipped endpoints.yaml should no longer carry the dead verifyCredentials REST entry")
 	}
 }

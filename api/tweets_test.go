@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -417,6 +418,67 @@ func TestStripHTMLTags(t *testing.T) {
 		if got := stripHTMLTags(in); got != want {
 			t.Errorf("stripHTMLTags(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestParseLiveUserTweetsFixture runs the parser against a real
+// UserTweets response captured from x.com on 2026-04-13 (modern web
+// client). This validates two migrations at once:
+//
+//  1. The instructions path moved from `timeline_v2.timeline.instructions`
+//     to `timeline.timeline.instructions`. scrapeUserTimeline now tries
+//     both, parser-side ParseTimelineInstructions is unchanged.
+//  2. Author projection moved screen_name/name from `legacy.*` to
+//     `core.*`, and avatar moved from `legacy.profile_image_url_https`
+//     to `avatar.image_url`. ParseTweet's defensive projection handles
+//     both.
+//
+// If x.com rotates the response shape and this test fails, capture a
+// fresh response into the same fixture file and update assertions.
+func TestParseLiveUserTweetsFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/usertweets_jack_2026_04.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(raw, &root); err != nil {
+		t.Fatal(err)
+	}
+	insts := walkPathSlice(root, "data", "user", "result", "timeline", "timeline", "instructions")
+	if len(insts) == 0 {
+		t.Fatal("no instructions found at modern path")
+	}
+	tweets, cursor := ParseTimelineInstructions(insts)
+	if cursor == "" {
+		t.Error("cursor not extracted from modern fixture")
+	}
+	if len(tweets) != 1 {
+		t.Fatalf("got %d tweets, want 1", len(tweets))
+	}
+	tw := tweets[0]
+	if tw.ID != "2042969980422009252" {
+		t.Errorf("ID = %q", tw.ID)
+	}
+	if tw.Author.Username != "jack" {
+		t.Errorf("Author.Username = %q (core.screen_name path broke)", tw.Author.Username)
+	}
+	if tw.Author.Name != "jack" {
+		t.Errorf("Author.Name = %q (core.name path broke)", tw.Author.Name)
+	}
+	if !tw.Author.Verified {
+		t.Error("Author.Verified should be true")
+	}
+	if tw.Author.Avatar == "" {
+		t.Error("Author.Avatar empty (avatar.image_url path broke)")
+	}
+	if tw.Metrics.Views != 7 {
+		t.Errorf("Metrics.Views = %d (string→int parser broke)", tw.Metrics.Views)
+	}
+	if tw.Metrics.Retweets != 24 {
+		t.Errorf("Metrics.Retweets = %d", tw.Metrics.Retweets)
+	}
+	if tw.CreatedAt == "" {
+		t.Error("CreatedAt missing")
 	}
 }
 

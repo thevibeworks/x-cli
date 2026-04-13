@@ -18,14 +18,63 @@ for sanity checks but not required for the request to succeed.
 
 ## Import flow
 
+Three modes, in order of how quickly you can get going:
+
+### 1. Auto from a local browser (recommended)
+
+```
+x auth import --from-browser chrome     # must be closed on macOS
+x auth import --from-browser firefox    # works while running
+x auth import --from-browser brave
+x auth import --from-browser edge
+x auth import --from-browser chromium
+```
+
+x-cli reads the browser's cookie SQLite store on disk and decrypts the
+encrypted values using the OS-specific Safe Storage key. This is exactly
+what Python's `browser_cookie3` / `rookiepy` libraries do, ported to Go
+via `github.com/browserutils/kooky`. You log in once in a real browser;
+x-cli uses the live session.
+
+Per-OS notes:
+
+- **macOS**: the first run prompts for Keychain access ("x wants to
+  access key 'Chrome' in your keychain"). That's normal — the AES key
+  for Chrome's Safe Storage lives in your keychain. **Chrome must be
+  closed** because it holds an exclusive lock on the cookie file.
+  Firefox is fine while running.
+- **Linux**: needs `libsecret` or `kwallet` running for Chrome family.
+  Falls back to a hardcoded "peanuts" salt on truly headless hosts.
+  Firefox needs no daemon.
+- **Windows**: uses DPAPI; works while the browser is running.
+
+### 2. Manual paste (works everywhere, including headless containers)
+
 1. Log into x.com in a real browser on a machine you normally use.
 2. DevTools → Application → Cookies → `https://x.com`
 3. Copy the values for `auth_token` and `ct0`.
 4. `x auth import`  → paste `auth_token=...; ct0=...; twid=u%3D...`
 5. `x auth status` should print `session ok — @yourhandle`.
 
-`x auth import` hits `/1.1/account/verify_credentials.json` before saving.
-If the cookies are wrong or expired, nothing gets stored.
+### 3. Scripted (`--cookie`)
+
+```
+x auth import --cookie 'auth_token=...; ct0=...; twid=u%3D...'
+```
+
+The cookie ends up in your shell history — prefer one of the other
+modes for normal use. Useful for CI bootstrap scripts.
+
+### What happens after import
+
+In every mode, `x auth import` parses the cookie string, extracts the
+numeric user id from `twid` (`u%3D<id>`), and calls `UserByRestId` to
+confirm the session is alive AND to fetch your screen name + display
+name. If the cookies are wrong or expired, nothing gets stored.
+
+(`x` no longer hits `/1.1/account/verify_credentials.json` — that
+endpoint was removed by X some time before April 2026 and now returns
+404. The `twid → UserByRestId` self-lookup is the modern equivalent.)
 
 ## Where the cookie lives
 

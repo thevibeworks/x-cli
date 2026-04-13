@@ -14,8 +14,8 @@ description: >
 ```
 x
 ├── auth
-│   ├── import                            # paste cookie header, stores in OS keychain
-│   ├── status                            # verify_credentials against X
+│   ├── import                            # --from-browser chrome|firefox|brave|edge | --cookie '...' | interactive paste
+│   ├── status                            # twid → UserByRestId self-lookup
 │   └── logout                            # remove stored session
 ├── doctor                                # endpoints, session, egress IP, ASN check
 ├── config
@@ -52,7 +52,17 @@ reports a cloud ASN for your egress IP, do not run `x grow` — your session
 normally logs in from residential and X will flag that asymmetry.
 
 ```bash
-x auth import           # paste: auth_token=...; ct0=...; twid=u%3D...
+# Easiest: auto-read from a local browser (Chrome must be closed on macOS)
+x auth import --from-browser chrome
+x auth import --from-browser firefox      # works while Firefox is running
+x auth import --from-browser brave
+
+# Or: paste the cookie header manually
+x auth import           # prompts; paste: auth_token=...; ct0=...; twid=u%3D...
+
+# Or: scripted setups
+x auth import --cookie 'auth_token=...; ct0=...; twid=u%3D...'
+
 x doctor                # expect: endpoints ok, session ok, egress not-cloud
 ```
 

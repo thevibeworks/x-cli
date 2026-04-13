@@ -163,14 +163,19 @@ func parseTweetDepth(raw any, depth int) *Tweet {
 	legacy := getMap(tweet, "legacy")
 	core := getMap(tweet, "core")
 
-	// ---- Author -----------------------------------------------------------
+	// ---- Author (defensive: read core.* first, fall back to legacy.*) -----
+	//
+	// Modern X moved screen_name / name out of `legacy` into a top-level
+	// `core` block, and the avatar URL out of `legacy.profile_image_url_https`
+	// into `avatar.image_url`. Older responses still nest those in `legacy`.
+	// We accept both so a YAML rotation doesn't strand the parser.
 	authorResult := walkPathMap(core, "user_results", "result")
 	authorLegacy := getMap(authorResult, "legacy")
 	author := TweetAuthor{
 		ID:       getString(authorResult, "rest_id"),
-		Username: getString(authorLegacy, "screen_name"),
-		Name:     getString(authorLegacy, "name"),
-		Avatar:   getString(authorLegacy, "profile_image_url_https"),
+		Username: firstString(authorResult, "core/screen_name", "legacy/screen_name"),
+		Name:     firstString(authorResult, "core/name", "legacy/name"),
+		Avatar:   firstString(authorResult, "avatar/image_url", "legacy/profile_image_url_https"),
 		Verified: getBool(authorResult, "is_blue_verified") || getBool(authorLegacy, "verified"),
 	}
 
@@ -416,13 +421,12 @@ func (c *Client) UserTweets(ctx context.Context, screenName string, opts Timelin
 		return nil, err
 	}
 	return c.scrapeUserTimeline(ctx, "UserTweets", map[string]any{
-		"userId":                                  userID,
-		"count":                                   20,
-		"includePromotedContent":                  false,
-		"withQuickPromoteEligibilityTweetFields":  true,
-		"withVoice":                               true,
-		"withV2Timeline":                          true,
-	}, opts, "data", "user", "result", "timeline_v2", "timeline", "instructions")
+		"userId":                                 userID,
+		"count":                                  20,
+		"includePromotedContent":                 false,
+		"withQuickPromoteEligibilityTweetFields": true,
+		"withVoice":                              true,
+	}, opts)
 }
 
 // UserTweetsAndReplies scrapes tweets + replies via UserTweetsAndReplies.
@@ -437,8 +441,20 @@ func (c *Client) UserTweetsAndReplies(ctx context.Context, screenName string, op
 		"includePromotedContent": false,
 		"withCommunity":          true,
 		"withVoice":              true,
-		"withV2Timeline":         true,
-	}, opts, "data", "user", "result", "timeline_v2", "timeline", "instructions")
+	}, opts)
+}
+
+// userTimelinePaths are the candidate response paths for the
+// UserTweets / UserTweetsAndReplies endpoints. X has shipped both:
+//
+//   data.user.result.timeline.timeline.instructions       (modern)
+//   data.user.result.timeline_v2.timeline.instructions    (XActions-vintage)
+//
+// We try the modern path first and fall back. Same defensive principle as
+// the field-level projection in extract.go.
+var userTimelinePaths = [][]string{
+	{"data", "user", "result", "timeline", "timeline", "instructions"},
+	{"data", "user", "result", "timeline_v2", "timeline", "instructions"},
 }
 
 func (c *Client) scrapeUserTimeline(
@@ -446,7 +462,6 @@ func (c *Client) scrapeUserTimeline(
 	endpointName string,
 	baseVars map[string]any,
 	opts TimelineOptions,
-	pathToInstructions ...string,
 ) ([]*Tweet, error) {
 	limit := opts.Limit
 	if limit <= 0 {
@@ -464,7 +479,15 @@ func (c *Client) scrapeUserTimeline(
 		if err := c.GraphQL(ctx, endpointName, vars, &raw); err != nil {
 			return nil, err
 		}
-		insts := walkPathSlice(raw, pathToInstructions...)
+		// Try each candidate path until one returns a non-empty
+		// instructions array.
+		var insts []any
+		for _, p := range userTimelinePaths {
+			if v := walkPathSlice(raw, p...); len(v) > 0 {
+				insts = v
+				break
+			}
+		}
 		tweets, bottom := ParseTimelineInstructions(insts)
 		for _, t := range tweets {
 			if len(out) >= limit {
