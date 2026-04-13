@@ -83,3 +83,32 @@ func TestListEmptyDomain(t *testing.T) {
 		t.Error("expected error for empty domain")
 	}
 }
+
+func TestProfileMatches(t *testing.T) {
+	cases := []struct {
+		want   string
+		name   string
+		path   string
+		expect bool
+	}{
+		// Match by human profile name (kooky's Browser.Profile()).
+		{"tammie", "Tammie", "/x/Chrome/Profile 6/Cookies", true},
+		{"Tammie", "Tammie", "/x/Chrome/Profile 6/Cookies", true},
+		{"tam", "Tammie", "/x/Chrome/Profile 6/Cookies", true},
+		// Match by on-disk directory name (what users see in errors).
+		{"Profile 6", "Tammie", "/x/Chrome/Profile 6/Cookies", true},
+		{"profile 6", "Tammie", "/x/Chrome/Profile 6/Cookies", true},
+		// Default profile.
+		{"default", "Default", "/x/Chrome/Default/Cookies", true},
+		// Misses.
+		{"profile 7", "Tammie", "/x/Chrome/Profile 6/Cookies", false},
+		{"work", "Tammie", "/x/Chrome/Profile 6/Cookies", false},
+	}
+	for _, tc := range cases {
+		got := profileMatches(tc.want, tc.name, tc.path)
+		if got != tc.expect {
+			t.Errorf("profileMatches(%q, %q, %q) = %v, want %v",
+				tc.want, tc.name, tc.path, got, tc.expect)
+		}
+	}
+}

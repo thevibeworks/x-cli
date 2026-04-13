@@ -102,13 +102,14 @@ func Load(ctx context.Context, browser, profile, domain string) (*Result, error)
 		}
 		actualBrowser := c.Browser.Browser()
 		actualProfile := c.Browser.Profile()
+		actualPath := c.Browser.FilePath()
 		if browser != "" && !strings.EqualFold(actualBrowser, browser) {
 			continue
 		}
-		if profile != "" && !strings.Contains(strings.ToLower(actualProfile), strings.ToLower(profile)) {
+		if profile != "" && !profileMatches(profile, actualProfile, actualPath) {
 			continue
 		}
-		key := storeKey{browser: actualBrowser, profile: actualProfile, source: c.Browser.FilePath()}
+		key := storeKey{browser: actualBrowser, profile: actualProfile, source: actualPath}
 		b, ok := stores[key]
 		if !ok {
 			b = &bucket{key: key, cookies: map[string]string{}}
@@ -194,6 +195,22 @@ func List(ctx context.Context, domain string) ([]Match, error) {
 		})
 	}
 	return out, nil
+}
+
+// profileMatches returns true when `want` (the user-supplied --profile
+// substring) matches either the human profile name from kooky (e.g.
+// "Tammie", "Default", "Work") OR a path component of the cookie file
+// (e.g. "Profile 6" from ".../Chrome/Profile 6/Cookies"). Case-
+// insensitive substring on both. This keeps `--profile "Profile 6"`
+// working alongside `--profile tammie`.
+func profileMatches(want, name, path string) bool {
+	w := strings.ToLower(want)
+	if strings.Contains(strings.ToLower(name), w) {
+		return true
+	}
+	// Match against the directory path so users can pass the on-disk
+	// "Profile N" name they see in `x auth browsers`.
+	return strings.Contains(strings.ToLower(path), w)
 }
 
 // FormatCookieHeader joins the relevant subset of a cookie map into a
