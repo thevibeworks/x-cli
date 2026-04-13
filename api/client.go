@@ -213,6 +213,13 @@ func (c *Client) applyHeaders(req *http.Request, opts requestOpts) {
 	req.Header.Set("x-twitter-active-user", "yes")
 	req.Header.Set("x-twitter-client-language", "en")
 
+	// Origin + Referer are required for X's same-origin CSRF check.
+	// Without them the gateway treats the call as cross-site and 403s
+	// authenticated reads. Real browsers add these automatically; Go's
+	// net/http does not, so we set them ourselves.
+	req.Header.Set("Origin", "https://x.com")
+	req.Header.Set("Referer", "https://x.com/")
+
 	// Client-hint headers matched to the UA. Pinned, not rotated per-request.
 	req.Header.Set("sec-ch-ua", `"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"`)
 	req.Header.Set("sec-ch-ua-mobile", "?0")

@@ -125,11 +125,12 @@ func runAuthBrowsers(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// cookieNamesWanted is the subset of browser cookies x-cli imports.
-// auth_token and ct0 are required; twid carries the user id so we can
-// skip a UserByScreenName roundtrip on `auth status`; the others are
-// helpful for stable header building but not strictly required.
-var cookieNamesWanted = []string{"auth_token", "ct0", "twid", "kdt", "att", "guest_id"}
+// cookieNamesRequired must be present after import or x-cli refuses
+// to save the session. Everything else kooky reads from the browser
+// store is also imported — real browsers send the full cookie set on
+// every request, and dropping minor cookies (personalization_id, gt,
+// _twitter_sess) confuses X's same-origin CSRF check on some routes.
+var cookieNamesRequired = []string{"auth_token", "ct0"}
 
 func runAuthImport(cmd *cobra.Command, _ []string) error {
 	cmdutil.Warn("Reminder: x-cli uses your real logged-in session. Automation can get")
@@ -258,12 +259,17 @@ func readBrowserCookies(browser, profile string, softMiss bool) (string, error) 
 		return "", err
 	}
 
-	raw := browsercookies.FormatCookieHeader(res.Cookies, cookieNamesWanted)
-	if raw == "" {
-		return "", fmt.Errorf("required cookies (auth_token, ct0) not in %s/%s — are you logged in to x.com on that profile?", res.Browser, res.Profile)
+	// Send everything the browser stores for x.com. Filtering down to
+	// a "wanted" subset breaks X's same-origin checks on some routes.
+	raw := browsercookies.FormatCookieHeader(res.Cookies, nil)
+	for _, name := range cookieNamesRequired {
+		if v, ok := res.Cookies[name]; !ok || v == "" {
+			return "", fmt.Errorf("required cookie %q not present in %s/%s — are you logged in to x.com on that profile?", name, res.Browser, res.Profile)
+		}
 	}
 
 	cmdutil.Success("using %s / %s (%s)", res.Browser, res.Profile, res.Source)
+	cmdutil.Info("imported %d cookie(s): %s", len(res.Cookies), summarizeCookieNames(res.Cookies))
 	if len(res.Alternatives) > 0 {
 		cmdutil.Warn("also found x.com sessions in:")
 		for _, a := range res.Alternatives {
@@ -274,20 +280,27 @@ func readBrowserCookies(browser, profile string, softMiss bool) (string, error) 
 	return raw, nil
 }
 
-func promptCookiePaste() (string, error) {
-	return cmdutil.ReadSecret("Paste cookie header (auth_token=...; ct0=...): ")
+// summarizeCookieNames returns a comma-separated, sorted list of cookie
+// names — values are never logged.
+func summarizeCookieNames(cookies map[string]string) string {
+	names := make([]string, 0, len(cookies))
+	for k := range cookies {
+		names = append(names, k)
+	}
+	sortStrings(names)
+	return strings.Join(names, ", ")
 }
 
-// countCookies returns how many of the wanted names are present in the
-// cookie map. Used only for the friendly log line.
-func countCookies(cookies map[string]string, wanted []string) int {
-	n := 0
-	for _, k := range wanted {
-		if v, ok := cookies[k]; ok && v != "" {
-			n++
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
 		}
 	}
-	return n
+}
+
+func promptCookiePaste() (string, error) {
+	return cmdutil.ReadSecret("Paste cookie header (auth_token=...; ct0=...): ")
 }
 
 func runAuthStatus(cmd *cobra.Command, _ []string) error {
