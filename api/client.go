@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/thevibeworks/x-cli/internal/tlsprint"
 )
 
 // Client is the HTTP transport for x-cli. One per authenticated session.
@@ -57,11 +59,22 @@ type Options struct {
 
 func New(opts Options) *Client {
 	if opts.HTTPClient == nil {
-		// 15s per request is generous for a single GraphQL call. Combined
-		// with the (lowered) default retry count of 1, total worst-case
-		// wall-clock for one client.GraphQL is ~30s — short enough that
-		// an interactive user does not assume the program is hung.
-		opts.HTTPClient = &http.Client{Timeout: 15 * time.Second}
+		// The default HTTP client is wired with a uTLS Chrome 120
+		// ClientHelloID round-tripper. x.com's /i/api/graphql/* path
+		// is behind Cloudflare Bot Management which JA3-fingerprints
+		// clients; Go's stdlib TLS gets flagged as non-browser and
+		// served a challenge page. Impersonating Chrome at the TLS
+		// handshake defeats that. See internal/tlsprint/ for detail.
+		//
+		// 15s per request is generous for a single GraphQL call. With
+		// the (lowered) default retry count of 1, total worst-case
+		// wall-clock for one client.GraphQL is ~30s — short enough
+		// that an interactive user does not assume the program is
+		// hung.
+		opts.HTTPClient = &http.Client{
+			Transport: tlsprint.NewChromeTransport(),
+			Timeout:   15 * time.Second,
+		}
 	}
 	if opts.UserAgent == "" {
 		opts.UserAgent = defaultUserAgent

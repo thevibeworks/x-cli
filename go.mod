@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/browserutils/kooky v0.2.9
+	github.com/refraction-networking/utls v1.8.2
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/zalando/go-keyring v0.2.7
@@ -12,6 +13,7 @@ require (
 )
 
 require (
+	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/browserutils/ese v0.0.0-20260314233042-37b6a03a93ce // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
@@ -21,6 +23,7 @@ require (
 	github.com/gonuts/binary v0.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/keybase/go-keychain v0.0.1 // indirect
+	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/sagikazarmark/locafero v0.7.0 // indirect

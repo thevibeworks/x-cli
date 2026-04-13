@@ -86,10 +86,13 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 
 	// 4. TLS impersonation
 	//
-	// v0.1 does not wrap the http.Client with a uTLS round-tripper, so our
-	// TLS ClientHello does not match a real Chrome. Say so loudly — it's the
-	// biggest single fingerprinting delta between x-cli and a browser.
-	cmdutil.Warn("tls: no Chrome impersonation (v0.1); JA3/JA4 differs from real browser")
+	// The default http.Client is wired with a uTLS Chrome 120
+	// ClientHelloID round-tripper (internal/tlsprint). This matches
+	// Chrome's JA3/JA4 fingerprint at the TLS handshake, which is
+	// what Cloudflare Bot Management on x.com's /i/api/graphql/* path
+	// inspects. Without this, every call gets a Cloudflare challenge
+	// page instead of the real response.
+	cmdutil.Success("tls: Chrome 120 impersonation via uTLS")
 
 	if !ok {
 		return fmt.Errorf("doctor reports one or more issues")
