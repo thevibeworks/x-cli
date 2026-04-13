@@ -1,5 +1,5 @@
 BINARY      := x
-PKG         := github.com/lroolle/x-cli
+PKG         := github.com/thevibeworks/x-cli
 VERSION     := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS     := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 GOFLAGS     := -trimpath

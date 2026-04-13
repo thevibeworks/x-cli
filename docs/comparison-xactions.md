@@ -483,10 +483,19 @@ or drops it. "Adapt" means we take the idea, not the code.
 
 | XActions subsystem                                  | x-cli status | Notes                                                                                            |
 |------------------------------------------------------|--------------|--------------------------------------------------------------------------------------------------|
-| HTTP scraper (GraphQL) — 7K LOC                     | Adapt        | Clean reimplementation in Go, endpoints as data. `api/client.go` + `api/profile.go` etc.         |
+| HTTP scraper (GraphQL) — 7K LOC                     | Implemented  | Clean reimplementation in Go, endpoints as data. `api/client.go`, `api/tweets.go`, `api/relationships.go`, `api/search.go`, `api/profile.go`. |
+| `parseTweetData` (Tweet/TweetWithVisibilityResults/TweetTombstone, recursive quote/retweet, media) | Implemented | `api/tweets.go` `ParseTweet` mirrors the projection rules with typed Go structs. |
+| `parseTimelineInstructions` (TimelineAddEntries / TimelineAddToModule / TimelinePinEntry) | Implemented | `api/tweets.go` `ParseTimelineInstructions`. |
+| `scrapeUserList` (followers / following / likers / retweeters with dedup) | Implemented | `api/relationships.go` `(*Client).scrapeUserList` — username-keyed Map dedup, multi-page cursor advance. |
+| `scrapeThread` (TweetDetail conversation walk + same-author filter + chronological sort) | Implemented | `api/tweets.go` `(*Client).GetThread`. |
+| `searchTweets` / `searchUsers` (SearchTimeline with product flag) | Implemented | `api/search.go`. Plus `BuildAdvancedQuery` mirrors XActions' advanced query composer. |
+| Inline GraphQL/REST error envelope handling (idempotent "already X" → success, rate-limit, not-found, suspended) | Implemented | `api/actions.go` `classifyMutationErrors`. |
+| Follow / Unfollow REST mutations with form body | Implemented | `api/actions.go` `(*Client).FollowUser` / `UnfollowUser`. |
+| Bulk operation runner with delay+jitter+dry-run+progress | Implemented | `cmd/grow.go` `executeFollowBatch`, throttle-aware via `api.Throttle.AwaitMutation`. |
+| Media URL extraction + best-bitrate mp4 picker      | Implemented | `api/tweets.go` `pickBestVideoURL` + `api/media.go` `(*Client).DownloadTweetMedia` with size-hint and atomic temp+rename. |
 | Stealth browser (puppeteer-extra)                    | Drop         | HTTP-only project. Users needing browser automation use a userscript.                            |
 | Playwright Python package                            | Drop         | Separate rewrite, not portable.                                                                  |
-| Monolithic `src/cli/index.js` (3,207 LOC, 140 cmds)  | Drop         | Structure is the bug. We re-scope to ~16 commands, one file per resource.                        |
+| Monolithic `src/cli/index.js` (3,207 LOC, 140 cmds)  | Drop         | Structure is the bug. We ship ~16 commands, one file per resource.                               |
 | MCP server (4K LOC, 140 tools)                       | Drop         | CLI IS the skill (`skills/x-cli/SKILL.md`). No separate MCP process.                             |
 | Express backend + Prisma + Postgres                  | Drop         | Not a CLI concern.                                                                               |
 | Bull + Redis job queue                               | Drop         | Replaced by in-process throttle + (future) state file.                                           |
@@ -495,11 +504,12 @@ or drops it. "Adapt" means we take the idea, not the code.
 | Remotion video rendering / xspace voice             | Drop         | Tangential. Not a Go ecosystem fit either.                                                       |
 | Plugin system (dynamic `import()`)                   | Drop         | Dynamic plugin loading is an attack surface for a CLI binary.                                    |
 | Thought-leader agent + A2A protocol                  | Drop         | Experimental in the source; nothing to port.                                                     |
-| 60+ browser-paste scripts in `src/*.js`              | Reference    | Useful as a feature wishlist. Reimplement anything worth keeping as real CLI commands.           |
+| 60+ browser-paste scripts in `src/*.js`              | Reference    | Useful as a feature wishlist. The most-asked features have been reimplemented as real commands.   |
 | Guest token flow                                     | Defer        | Not needed for v0.1 scope. Easy to add later.                                                    |
 | Credential login flow                                | Drop         | Intentional. See §2.5.                                                                            |
-| Cookie AES-GCM file persistence                      | Adapt        | Our version: machine-id-derived key, keychain primary, no user-managed key.                      |
-| Rate limit strategies (Wait / Error)                 | Adapt        | Our version: token bucket + mutation budget + autopause, configured via YAML.                    |
+| Cookie AES-GCM file persistence                      | Adapt        | Our version: machine-id-derived key, keychain primary, no user-managed key, AAD-bound.           |
+| Rate limit strategies (Wait / Error)                 | Adapt        | Our version: token bucket + mutation budget + autopause + adaptive backoff from `x-rate-limit-reset`. |
+| Media chunked uploader (INIT / APPEND / FINALIZE)    | Drop         | x-cli does not post tweets in v0.1.                                                              |
 
 ---
 

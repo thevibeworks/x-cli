@@ -79,17 +79,3 @@ func extractProfile(raw map[string]any) *Profile {
 	return p
 }
 
-func getString(m map[string]any, k string) string {
-	v, _ := m[k].(string)
-	return v
-}
-
-func getInt(m map[string]any, k string) int {
-	switch x := m[k].(type) {
-	case float64:
-		return int(x)
-	case int:
-		return x
-	}
-	return 0
-}

@@ -125,8 +125,11 @@ func TestGetIntVariants(t *testing.T) {
 	}{
 		{float64(42), 42},
 		{int(42), 42},
-		{"42", 0}, // unsupported type
+		{int64(42), 42},
+		{"42", 42},  // X returns view counts as strings
+		{"abc", 0},  // non-numeric string yields 0
 		{nil, 0},
+		{true, 0},
 	}
 	for _, tc := range cases {
 		if got := getInt(map[string]any{"k": tc.in}, "k"); got != tc.want {

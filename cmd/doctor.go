@@ -109,6 +109,23 @@ func verifyLiveSession(ctx context.Context, eps *api.EndpointMap, sess *store.Se
 	return err
 }
 
+// EgressIsCloud returns true when the current egress IP belongs to a
+// known cloud / hosting provider. Used by `grow` to refuse mutations
+// from cloud ASNs by default.
+//
+// Returns false (not blocking) on any lookup error so we don't false-
+// positive a mutation when the diagnostic itself is broken. Caller must
+// log the warning either way.
+func EgressIsCloud(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, asn, org, err := egressInfo(ctx)
+	if err != nil {
+		return false
+	}
+	return isCloudASN(asn, org)
+}
+
 // egressInfo does a single lookup to ipinfo.io. Deliberately no retries:
 // this is diagnostics, not a hot path.
 func egressInfo(ctx context.Context) (ip, asn, org string, err error) {

@@ -24,23 +24,22 @@ x
 ├── profile
 │   └── get <screen-name>                 # UserByScreenName
 ├── tweets
-│   ├── list <screen-name>                # --limit --cursor
-│   ├── get <tweet-id>                    # TweetDetail
-│   └── replies <screen-name>
+│   ├── list <screen-name>                # -n --replies   (UserTweets / UserTweetsAndReplies)
+│   └── get <tweet-id>                    # TweetResultByRestId
 ├── search
-│   ├── posts <query>                     # --limit --latest
-│   └── users <query>
-├── followers <screen-name>               # --limit
-├── following <screen-name>               # --limit
+│   ├── posts <query>                     # -n --product --since --until --from --to --lang --filter --exclude --min-likes --min-retweets
+│   └── users <query>                     # -n
+├── followers <screen-name>               # -n
+├── following <screen-name>               # -n
 ├── thread
-│   └── unroll <tweet-id>                 # reconstruct a thread from a root tweet
+│   └── unroll <tweet-id>                 # --all-authors  (TweetDetail conversation walk)
 ├── media
-│   └── download <id|url> [--out dir]     # image + video
+│   └── download <tweet-id|url>           # -o --quality
 ├── monitor
-│   └── account <screen-name>             # --interval poll loop, streams diffs
+│   └── account <screen-name>             # -i --once  (poll loop, streams new tweets + follower delta)
 └── grow                                  # mutations; dry-run unless --apply
-    ├── follow-engagers <tweet-id>        # --max --min-followers
-    └── follow-by-keyword <query>         # --max --min-followers --lang
+    ├── follow-engagers <tweet-id|url>    # -n --min-followers --apply --i-know-its-a-cloud-ip
+    └── follow-by-keyword <query>         # -n --min-followers --apply --i-know-its-a-cloud-ip
 ```
 
 Global flags: `--config`, `--endpoints`, `--json`, `-v/--verbose`.
@@ -63,14 +62,16 @@ x doctor                # expect: endpoints ok, session ok, egress not-cloud
 x profile get jack
 x profile get jack --json
 
-x tweets list jack --limit 50
+x tweets list jack -n 50
+x tweets list jack -n 50 --replies
 x tweets get 1234567890123456789
 
-x search posts "golang" --latest --limit 100
+x search posts "golang" --product Latest -n 100
+x search posts "rust" --from rob --since 2026-01-01 --min-likes 100
 x search users "kubernetes"
 
-x followers jack --limit 200
-x following jack --limit 200
+x followers jack -n 200
+x following jack -n 200
 ```
 
 Pagination is automatic; `--limit` caps the number of items, not pages. Reads
@@ -80,41 +81,58 @@ an endpoint even with concurrent commands sharing the same throttle.
 ## Threads and media
 
 ```bash
-x thread unroll 1234567890123456789          # prints the thread in order
-x media download 1234567890123456789 --out ./dl
+x thread unroll 1234567890123456789                    # self-thread only
+x thread unroll 1234567890123456789 --all-authors      # include replies from anyone
+x media download 1234567890123456789 -o ./dl
 x media download https://x.com/jack/status/12345
+x media download 1234... --quality orig                # original-resolution images
 ```
 
-Media download grabs the best-quality variants (m3u8 → mp4, all image sizes).
+Media download picks the highest-bitrate `video/mp4` variant for videos and
+applies a `?name=large` size hint to images. Files are written as
+`<tweetID>_<index>.<ext>` to the output directory.
 
 ## Monitoring
 
 ```bash
-x monitor account elonmusk --interval 30s    # streams new tweets + follower delta
+x monitor account elonmusk -i 30s              # streams new tweets + follower delta
+x monitor account elonmusk --once              # one snapshot, exit
 ```
 
 Monitor is a polling loop, not a websocket — X does not expose a stream
-interface on the web endpoints. Respect the interval; anything under 15s is
-both pointless and suspicious.
+interface on the web endpoints. The interval is clamped to a minimum of 15s
+in code; anything below is both pointless and suspicious.
 
 ## Growth (mutations — careful)
 
 ```bash
-x grow follow-engagers 1234567890123456789 --max 50
-# ^ dry-run: prints who would be followed, does not mutate.
+# Follow likers + retweeters of a tweet (dedup'd, sorted by follower count desc)
+x grow follow-engagers 1234567890123456789 -n 25
+x grow follow-engagers 1234567890123456789 -n 25 --min-followers 100
+x grow follow-engagers 1234567890123456789 -n 25 --apply
 
-x grow follow-engagers 1234567890123456789 --max 50 --apply
-# ^ actually follows, respecting:
-#     - min 8s / max 22s random gap between follows
-#     - daily cap (default 200)
-#     - automatic 10-min pause after 3 consecutive errors
-#     - refuses to run if doctor reported a cloud ASN
+# Follow distinct authors of recent tweets matching a query
+x grow follow-by-keyword "golang devops" -n 20
+x grow follow-by-keyword "kubernetes" -n 20 --min-followers 500 --apply
 ```
 
-Defaults enforce the min-gap/jitter/daily-cap; override in
-`~/.config/x-cli/config.yaml` if you know what you're doing. If a mutation
-returns 429, x-cli reads `x-rate-limit-reset` and waits until then — not a
-fixed sleep.
+Both subcommands:
+
+  - dry-run by default; `--apply` is required to mutate
+  - filter by `--min-followers`
+  - cap at `-n` follows per run (default 25)
+  - respect the global mutation throttle: min 8s / max 22s random gap,
+    daily cap of 200, autopause for 10 minutes after 3 consecutive errors
+  - on 429, read `x-rate-limit-reset` from the response and wait until
+    then — not a fixed sleep
+  - refuse to mutate from a cloud ASN unless `--i-know-its-a-cloud-ip`
+    is also passed
+  - treat X's "you have already followed this user" envelope as success
+    (idempotent), so a re-run after a partial batch does not log false
+    failures
+
+Override the throttle defaults in `~/.config/x-cli/config.yaml` if you
+know what you're doing.
 
 ## Throttling model
 

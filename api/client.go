@@ -35,6 +35,8 @@ type Client struct {
 	sessionMu sync.RWMutex
 	session   Session
 
+	userIDCache sync.Map // screen_name(lowercased) → rest_id
+
 	userAgent    string
 	retryBackoff time.Duration // base unit for exponential backoff; overridable in tests
 }
