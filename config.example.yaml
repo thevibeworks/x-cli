@@ -1,0 +1,31 @@
+# x-cli configuration. Copy to ~/.config/x-cli/config.yaml and edit.
+# CLI flags override config values; config overrides defaults.
+
+# HTTP transport
+http:
+  timeout: 30s
+  proxy: ""              # http://user:pass@host:port or socks5://host:port
+  tls_impersonate: chrome_120   # chrome_120 | chrome_131 | firefox_120 | off
+
+# Rate limiting (defaults; per-endpoint overrides in endpoints.yaml)
+throttle:
+  read_rps: 0.5                  # 1 request every 2 seconds by default
+  read_burst: 2
+  mutation_min_gap: 8s           # minimum spacing between mutating calls
+  mutation_max_gap: 22s          # upper bound of jitter window
+  mutation_daily_cap: 200        # hard ceiling across all mutation commands
+  autopause_on_error_cluster: 3  # pause for 10 min after 3 consecutive errors
+
+# Output
+output:
+  format: text           # text | json | ndjson
+  color: auto            # auto | always | never
+
+# Safety
+safety:
+  refuse_mutations_from_cloud_asn: true
+  require_apply_flag: true        # grow commands dry-run unless --apply
+
+# Paths
+paths:
+  session_file: ~/.config/x-cli/session.enc   # fallback if keychain unavailable

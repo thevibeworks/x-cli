@@ -1,0 +1,148 @@
+# X internal endpoint map.
+#
+# These are reverse-engineered from X's web client. Query IDs rotate whenever
+# X ships a new web bundle. When a call starts returning 404 or a schema
+# mismatch, update the queryId here and release a patch.
+#
+# Cross-referenced from:
+#   - d60/twikit (MIT) — twikit/client/gql.py
+#   - the-convocation/twitter-scraper (MIT) — src/api-data.ts
+#
+# This file is data, not code, on purpose. You can ship updates without a
+# rebuild by replacing it at ~/.config/x-cli/endpoints.yaml.
+
+bases:
+  graphql: https://x.com/i/api/graphql
+  rest: https://x.com/i/api
+  api: https://api.x.com
+
+# Public bearer token embedded in X's web bundle. Same token used by twikit
+# and twitter-scraper. Rotate if X revokes it.
+bearer: "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
+
+# GraphQL features blob. Must match what the server expects at the time of
+# the captured bundle. If the server rejects a query with a feature error,
+# append the missing key here.
+features:
+  responsive_web_graphql_exclude_directive_enabled: true
+  verified_phone_label_enabled: false
+  creator_subscriptions_tweet_preview_api_enabled: true
+  responsive_web_graphql_timeline_navigation_enabled: true
+  responsive_web_graphql_skip_user_profile_image_extensions_enabled: false
+  c9s_tweet_anatomy_moderator_badge_enabled: true
+  tweetypie_unmention_optimization_enabled: true
+  responsive_web_edit_tweet_api_enabled: true
+  graphql_is_translatable_rweb_tweet_is_translatable_enabled: true
+  view_counts_everywhere_api_enabled: true
+  longform_notetweets_consumption_enabled: true
+  responsive_web_twitter_article_tweet_consumption_enabled: true
+  tweet_awards_web_tipping_enabled: false
+  freedom_of_speech_not_reach_fetch_enabled: true
+  standardized_nudges_misinfo: true
+  tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true
+  longform_notetweets_rich_text_read_enabled: true
+  longform_notetweets_inline_media_enabled: true
+  responsive_web_media_download_video_enabled: false
+  responsive_web_enhance_cards_enabled: false
+
+# GraphQL queries and mutations.
+#
+# budget fields:
+#   rps:    steady-state requests per second (read)
+#   burst:  token bucket burst size
+#   kind:   read | mutation
+graphql:
+  UserByScreenName:
+    queryId: NimuplG1OB7Fd2btCLdBOw
+    operationName: UserByScreenName
+    kind: read
+    rps: 0.5
+    burst: 2
+  UserByRestId:
+    queryId: tD8zKvQzwY3kdx5yz6YmOw
+    operationName: UserByRestId
+    kind: read
+    rps: 0.5
+    burst: 2
+  UserTweets:
+    queryId: QWF3SzpHmykQHsQMixG0cg
+    operationName: UserTweets
+    kind: read
+    rps: 0.3
+    burst: 2
+  UserTweetsAndReplies:
+    queryId: vMkJyzx1wdmvOeeNG0n6Wg
+    operationName: UserTweetsAndReplies
+    kind: read
+    rps: 0.3
+    burst: 2
+  UserMedia:
+    queryId: 2tLOJWwGuCTytDrGBg8VwQ
+    operationName: UserMedia
+    kind: read
+    rps: 0.3
+    burst: 2
+  TweetDetail:
+    queryId: U0HTv-bAWTBYylwEMT7x5A
+    operationName: TweetDetail
+    kind: read
+    rps: 0.5
+    burst: 2
+  TweetResultByRestId:
+    queryId: Xl5pC_lBk_gcO2ItU39DQw
+    operationName: TweetResultByRestId
+    kind: read
+    rps: 0.5
+    burst: 2
+  SearchTimeline:
+    queryId: flaR-PUMshxFWZWPNpq4zA
+    operationName: SearchTimeline
+    kind: read
+    rps: 0.3
+    burst: 2
+  Followers:
+    queryId: gC_lyAxZOptAMLCJX5UhWw
+    operationName: Followers
+    kind: read
+    rps: 0.2
+    burst: 1
+  Following:
+    queryId: 2vUj-_Ek-UmBVDNtd8OnQA
+    operationName: Following
+    kind: read
+    rps: 0.2
+    burst: 1
+  Favoriters:
+    queryId: LLkw5EcVutJL6y-2gkz22A
+    operationName: Favoriters
+    kind: read
+    rps: 0.2
+    burst: 1
+  Retweeters:
+    queryId: X-XEqG5qHQSAwmvy00xfyQ
+    operationName: Retweeters
+    kind: read
+    rps: 0.2
+    burst: 1
+
+# REST v1.1 endpoints used for follow/unfollow, etc.
+# Budgets here are mutation ceilings.
+rest:
+  verifyCredentials:
+    path: /1.1/account/verify_credentials.json
+    method: GET
+    kind: read
+  friendshipsCreate:
+    path: /1.1/friendships/create.json
+    method: POST
+    kind: mutation
+    min_gap: 8s
+    max_gap: 22s
+    daily_cap: 200
+  friendshipsDestroy:
+    path: /1.1/friendships/destroy.json
+    method: POST
+    kind: mutation
+    min_gap: 8s
+    max_gap: 22s
+    daily_cap: 200

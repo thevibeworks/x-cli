@@ -1,0 +1,14 @@
+bin/
+dist/
+*.test
+*.out
+.env
+.env.*
+!.env.example
+~/.config/x-cli/
+session.enc
+.DS_Store
+.idea/
+.vscode/
+coverage.out
+reference/
