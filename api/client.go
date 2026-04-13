@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,10 @@ type Client struct {
 
 	userAgent    string
 	retryBackoff time.Duration // base unit for exponential backoff; overridable in tests
+
+	// Verbose causes request() to log "GET <url> → <status> (<dur>)" to
+	// stderr. The Cookie header is never logged.
+	Verbose bool
 }
 
 type Options struct {
@@ -47,11 +52,16 @@ type Options struct {
 	HTTPClient *http.Client
 	Session    Session
 	UserAgent  string
+	Verbose    bool
 }
 
 func New(opts Options) *Client {
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+		// 15s per request is generous for a single GraphQL call. Combined
+		// with the (lowered) default retry count of 1, total worst-case
+		// wall-clock for one client.GraphQL is ~30s — short enough that
+		// an interactive user does not assume the program is hung.
+		opts.HTTPClient = &http.Client{Timeout: 15 * time.Second}
 	}
 	if opts.UserAgent == "" {
 		opts.UserAgent = defaultUserAgent
@@ -66,6 +76,7 @@ func New(opts Options) *Client {
 		session:      opts.Session,
 		userAgent:    opts.UserAgent,
 		retryBackoff: time.Second,
+		Verbose:      opts.Verbose,
 	}
 }
 
@@ -105,9 +116,15 @@ type requestOpts struct {
 }
 
 func (c *Client) request(ctx context.Context, method, rawURL string, body io.Reader, opts requestOpts) (*http.Response, error) {
+	// Default to 1 retry. The throttle handles 429 separately, the
+	// caller can bump retries via opts.maxRetries when running a long
+	// paginated scrape that benefits from network resilience. For a
+	// single interactive call (like `auth import`'s VerifyCredentials)
+	// one retry is enough — the user wants fast failure, not 90s of
+	// silence on a stuck connection.
 	maxRetries := opts.maxRetries
 	if maxRetries == 0 {
-		maxRetries = 3
+		maxRetries = 1
 	}
 
 	var buf []byte
@@ -131,8 +148,10 @@ func (c *Client) request(ctx context.Context, method, rawURL string, body io.Rea
 		}
 		c.applyHeaders(req, opts)
 
+		started := time.Now()
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			c.logRequest(method, rawURL, 0, time.Since(started), err)
 			lastErr = &NetworkError{Endpoint: opts.endpointName, Err: err}
 			if attempt < maxRetries {
 				if err := sleep(ctx, c.backoffFor(attempt)); err != nil {
@@ -142,6 +161,7 @@ func (c *Client) request(ctx context.Context, method, rawURL string, body io.Rea
 			}
 			return nil, lastErr
 		}
+		c.logRequest(method, rawURL, resp.StatusCode, time.Since(started), nil)
 
 		c.throttle.Observe(resp.StatusCode, parseRateReset(resp))
 		c.mergeSetCookies(resp)
@@ -280,6 +300,25 @@ func (c *Client) mergeSetCookies(resp *http.Response) {
 		}
 		c.session.Cookies[ck.Name] = ck.Value
 	}
+}
+
+// logRequest prints a one-line summary of an HTTP request to stderr if
+// Verbose is on. The query string is stripped because it carries the
+// GraphQL `variables` blob which can include user-controlled IDs that
+// are uninteresting noise. The Cookie header is never logged regardless
+// of verbosity — the only place we ever read it is applyHeaders.
+func (c *Client) logRequest(method, rawURL string, status int, dur time.Duration, err error) {
+	if !c.Verbose {
+		return
+	}
+	if i := strings.IndexByte(rawURL, '?'); i > 0 {
+		rawURL = rawURL[:i] + "?…"
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "» %s %s → ERROR (%s): %v\n", method, rawURL, dur.Round(time.Millisecond), err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "» %s %s → %d (%s)\n", method, rawURL, status, dur.Round(time.Millisecond))
 }
 
 // backoffFor computes exponential backoff with jitter for retry attempt n.

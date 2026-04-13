@@ -272,9 +272,12 @@ func TestGraphQL401ReturnsAuthError(t *testing.T) {
 }
 
 func TestRetryOn5xxThenSuccess(t *testing.T) {
+	// Default retry budget is 1 → 2 attempts total. First call returns
+	// 500, retry returns 200. Validates the retry path without relying
+	// on a specific maxRetries value.
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&calls, 1) < 3 {
+		if atomic.AddInt32(&calls, 1) < 2 {
 			w.WriteHeader(500)
 			return
 		}
@@ -291,8 +294,8 @@ func TestRetryOn5xxThenSuccess(t *testing.T) {
 	if err := c.GraphQL(context.Background(), "Op", nil, &raw); err != nil {
 		t.Fatalf("GraphQL: %v", err)
 	}
-	if atomic.LoadInt32(&calls) != 3 {
-		t.Errorf("expected 3 calls, got %d", atomic.LoadInt32(&calls))
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("expected 2 calls, got %d", atomic.LoadInt32(&calls))
 	}
 	if v, _ := raw["ok"].(bool); !v {
 		t.Error("ok field not decoded")

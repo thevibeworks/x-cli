@@ -115,14 +115,18 @@ func runAuthImport(cmd *cobra.Command, _ []string) error {
 		Endpoints: eps,
 		Throttle:  api.NewThrottle(api.Defaults{}),
 		Session:   api.Session{Cookies: cookies},
+		Verbose:   verbose,
 	})
 
-	ctx, cancel := withTimeout(context.Background())
+	// Tight timeout for the import-time liveness check. We want
+	// snappy failure on a stuck connection, not 90 seconds of silence.
+	ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
 	defer cancel()
 
+	cmdutil.Info("verifying session against X (UserByRestId via twid)...")
 	user, err := client.VerifyCredentials(ctx)
 	if err != nil {
-		return fmt.Errorf("verify session: %w", err)
+		return fmt.Errorf("verify session: %w (your cookies may be stale or X is unreachable)", err)
 	}
 
 	path, err := sessionFilePath()

@@ -165,6 +165,7 @@ func newClient(ctx context.Context) (*api.Client, error) {
 				Name:     sess.Name,
 			},
 		},
+		Verbose: verbose,
 	})
 	return client, nil
 }
