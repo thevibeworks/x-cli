@@ -46,70 +46,154 @@ var Browsers = []string{"chrome", "firefox", "brave", "edge", "chromium"}
 // Result is what Load returns: a flat map of cookie name → value, plus
 // some diagnostic context for the caller to render or log.
 type Result struct {
-	Cookies map[string]string
-	Source  string // human-readable description of the cookie store path
-	Browser string // matched browser name
+	Cookies      map[string]string
+	Source       string // file path of the chosen cookie store
+	Browser      string // matched browser name (chrome, firefox, ...)
+	Profile      string // matched profile name (Default, Profile 6, ...)
+	Alternatives []Match
+}
+
+// Match identifies one cookie store that contains the requested domain.
+// Returned in Result.Alternatives so the caller can warn the user when
+// auto-detect picked one of several candidates.
+type Match struct {
+	Browser string
+	Profile string
+	Source  string
+	Count   int // number of cookies matched at this store
 }
 
 // Load reads cookies for the given domain from one or more local cookie
-// stores belonging to the named browser. Returns the merged cookie map.
+// stores belonging to the named browser. Returns the merged cookie map
+// for the FIRST matching store, plus a list of the other stores it saw
+// (Result.Alternatives) so the caller can warn the user about ambiguity.
 //
 // browser is matched case-insensitively against the known list. Pass ""
-// to scan ALL detected browsers — useful when you don't care which
-// browser is logged in, just that some browser is.
+// to scan ALL detected browsers.
+//
+// profile is matched case-insensitively as a substring against the
+// browser profile name (e.g. "default", "profile 6", "work"). Pass ""
+// to accept any profile.
 //
 // domain is matched as a host suffix (so "x.com" picks up cookies on
 // ".x.com" too).
-func Load(ctx context.Context, browser, domain string) (*Result, error) {
+func Load(ctx context.Context, browser, profile, domain string) (*Result, error) {
 	if domain == "" {
 		return nil, errors.New("browsercookies: domain required")
 	}
 
-	out := map[string]string{}
-	matchedBrowser := ""
-	matchedSource := ""
+	// Group cookies by (browser, profile, source) so we can build a
+	// stable list of all matching stores in the order kooky yields them.
+	type storeKey struct {
+		browser string
+		profile string
+		source  string
+	}
+	type bucket struct {
+		key     storeKey
+		cookies map[string]string
+	}
+	var order []storeKey
+	stores := map[storeKey]*bucket{}
 
-	// kooky.TraverseCookies returns an iter.Seq2[*Cookie, error] that
-	// walks every registered cookie store finder and yields cookies as
-	// it goes. We filter by browser in our own code so the caller can
-	// pass an empty string to mean "any browser".
 	for c, err := range kooky.TraverseCookies(ctx, kooky.Valid, kooky.DomainHasSuffix(domain)) {
-		if err != nil {
-			// Skip unreadable stores instead of bailing — kooky reports
-			// per-store failures as soft errors. We surface only "found
-			// nothing" at the end.
+		if err != nil || c == nil || c.Browser == nil {
 			continue
 		}
-		if c == nil || c.Browser == nil {
+		actualBrowser := c.Browser.Browser()
+		actualProfile := c.Browser.Profile()
+		if browser != "" && !strings.EqualFold(actualBrowser, browser) {
 			continue
 		}
-		actual := c.Browser.Browser()
-		if browser != "" && !strings.EqualFold(actual, browser) {
+		if profile != "" && !strings.Contains(strings.ToLower(actualProfile), strings.ToLower(profile)) {
 			continue
 		}
-		// First write wins so the most recently traversed store's
-		// values are preserved. kooky lists default profiles first.
-		if _, exists := out[c.Name]; !exists {
-			out[c.Name] = c.Value
+		key := storeKey{browser: actualBrowser, profile: actualProfile, source: c.Browser.FilePath()}
+		b, ok := stores[key]
+		if !ok {
+			b = &bucket{key: key, cookies: map[string]string{}}
+			stores[key] = b
+			order = append(order, key)
 		}
-		if matchedBrowser == "" {
-			matchedBrowser = actual
-			matchedSource = c.Browser.FilePath()
+		// First-write-wins per store so later cookies in the same store
+		// don't overwrite earlier ones.
+		if _, exists := b.cookies[c.Name]; !exists {
+			b.cookies[c.Name] = c.Value
 		}
 	}
 
-	if len(out) == 0 {
-		if browser != "" {
-			return nil, fmt.Errorf("no cookies for %s in any %s cookie store — make sure %s is installed and you're logged in", domain, browser, browser)
+	if len(order) == 0 {
+		switch {
+		case browser != "" && profile != "":
+			return nil, fmt.Errorf("no cookies for %s in %s/%s — check `x auth browsers`", domain, browser, profile)
+		case browser != "":
+			return nil, fmt.Errorf("no cookies for %s in any %s profile — check `x auth browsers`", domain, browser)
+		case profile != "":
+			return nil, fmt.Errorf("no cookies for %s in any profile matching %q — check `x auth browsers`", domain, profile)
+		default:
+			return nil, fmt.Errorf("no cookies for %s in any local browser cookie store", domain)
 		}
-		return nil, fmt.Errorf("no cookies for %s in any local browser cookie store", domain)
+	}
+
+	// Choose the first match. The rest are "alternatives" the caller
+	// can surface to the user.
+	chosen := stores[order[0]]
+	alts := make([]Match, 0, len(order)-1)
+	for _, k := range order[1:] {
+		b := stores[k]
+		alts = append(alts, Match{
+			Browser: k.browser,
+			Profile: k.profile,
+			Source:  k.source,
+			Count:   len(b.cookies),
+		})
 	}
 
 	return &Result{
-		Cookies: out,
-		Source:  matchedSource,
-		Browser: matchedBrowser,
+		Cookies:      chosen.cookies,
+		Source:       chosen.key.source,
+		Browser:      chosen.key.browser,
+		Profile:      chosen.key.profile,
+		Alternatives: alts,
 	}, nil
+}
+
+// List enumerates every cookie store that has at least one cookie for
+// the given domain. Used by `x auth browsers` to show the user which
+// (browser, profile) pairs are available before they pin one.
+func List(ctx context.Context, domain string) ([]Match, error) {
+	if domain == "" {
+		return nil, errors.New("browsercookies: domain required")
+	}
+	type key struct {
+		browser, profile, source string
+	}
+	seen := map[key]int{}
+	var order []key
+	for c, err := range kooky.TraverseCookies(ctx, kooky.Valid, kooky.DomainHasSuffix(domain)) {
+		if err != nil || c == nil || c.Browser == nil {
+			continue
+		}
+		k := key{
+			browser: c.Browser.Browser(),
+			profile: c.Browser.Profile(),
+			source:  c.Browser.FilePath(),
+		}
+		if _, ok := seen[k]; !ok {
+			order = append(order, k)
+		}
+		seen[k]++
+	}
+	out := make([]Match, 0, len(order))
+	for _, k := range order {
+		out = append(out, Match{
+			Browser: k.browser,
+			Profile: k.profile,
+			Source:  k.source,
+			Count:   seen[k],
+		})
+	}
+	return out, nil
 }
 
 // FormatCookieHeader joins the relevant subset of a cookie map into a

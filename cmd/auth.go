@@ -17,6 +17,7 @@ import (
 
 var (
 	authFromBrowser string
+	authProfile     string
 	authCookieFlag  string
 	authForcePaste  bool
 )
@@ -73,6 +74,8 @@ var authLogoutCmd = &cobra.Command{
 func init() {
 	authImportCmd.Flags().StringVar(&authFromBrowser, "from-browser", "",
 		"pin to a specific browser: chrome | firefox | brave | edge | chromium")
+	authImportCmd.Flags().StringVar(&authProfile, "profile", "",
+		"pin to a specific browser profile (substring match, e.g. \"Profile 6\", \"Default\", \"work\")")
 	authImportCmd.Flags().StringVar(&authCookieFlag, "cookie", "",
 		"non-interactive: pass the full cookie header (visible in shell history)")
 	authImportCmd.Flags().BoolVar(&authForcePaste, "paste", false,
@@ -81,7 +84,45 @@ func init() {
 	authCmd.AddCommand(authImportCmd)
 	authCmd.AddCommand(authStatusCmd)
 	authCmd.AddCommand(authLogoutCmd)
+	authCmd.AddCommand(authBrowsersCmd)
 	rootCmd.AddCommand(authCmd)
+}
+
+var authBrowsersCmd = &cobra.Command{
+	Use:   "browsers",
+	Short: "List local browser profiles that have an x.com session",
+	Long: `Enumerate every browser cookie store on this machine that contains
+at least one cookie for x.com. Use this to discover what to pass to
+` + "`--from-browser`" + ` and ` + "`--profile`" + ` when ` + "`auth import`" + `'s auto-detect picks
+the wrong profile.`,
+	RunE: runAuthBrowsers,
+}
+
+func runAuthBrowsers(cmd *cobra.Command, _ []string) error {
+	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	defer cancel()
+	matches, err := browsercookies.List(ctx, "x.com")
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		cmdutil.Warn("no browser cookie stores have an x.com session")
+		return nil
+	}
+	tw := cmdutil.NewTabPrinter(os.Stdout)
+	for i, m := range matches {
+		marker := " "
+		if i == 0 {
+			marker = "*" // first match is what auto-detect would pick
+		}
+		tw.Row(marker+" "+m.Browser, fmt.Sprintf("%-20s  %d cookie(s)  %s", m.Profile, m.Count, m.Source))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "* = auto-detect default. Override with --from-browser and --profile.")
+	return nil
 }
 
 // cookieNamesWanted is the subset of browser cookies x-cli imports.
@@ -152,14 +193,18 @@ func runAuthImport(cmd *cobra.Command, _ []string) error {
 
 // acquireCookieString resolves the cookie string in priority order:
 //
-//  1. --cookie '...'                  (explicit one-shot)
-//  2. --from-browser <name>           (explicit browser pin)
-//  3. --paste                         (explicit interactive paste)
-//  4. (default) auto-scan all browsers, fall through to paste if empty
+//  1. --cookie '...'                       (explicit one-shot)
+//  2. --paste                              (explicit interactive paste)
+//  3. --from-browser / --profile           (pinned browser cookie read)
+//  4. (default) auto-scan, fall through to paste if empty
 //
 // The default mode is the only one that can SOFT-FAIL: if no browser
 // has an x.com session, we silently drop to the paste prompt without
 // error. Explicit modes hard-fail on their own terms.
+//
+// In every browser-cookie path, alternatives (other browser/profile
+// pairs that also have x.com cookies) are surfaced so the user can
+// re-run with `--profile` if auto-detect picked the wrong one.
 func acquireCookieString() (string, error) {
 	switch {
 	case authCookieFlag != "":
@@ -168,55 +213,65 @@ func acquireCookieString() (string, error) {
 	case authForcePaste:
 		return promptCookiePaste()
 
-	case authFromBrowser != "":
-		raw, _, err := readBrowserCookies(authFromBrowser, false)
+	case authFromBrowser != "" || authProfile != "":
+		raw, err := readBrowserCookies(authFromBrowser, authProfile, false)
 		return raw, err
 
 	default:
-		// Auto-detect: any browser. Falls through to paste on miss.
-		raw, source, err := readBrowserCookies("", true)
+		raw, err := readBrowserCookies("", "", true)
 		if err == nil && raw != "" {
-			cmdutil.Success("auto-detected x.com session in %s", source)
 			return raw, nil
 		}
 		if err != nil {
 			cmdutil.Warn("auto-detect: %v", err)
 		}
-		cmdutil.Info("falling back to interactive paste (use --from-browser to pin a specific browser)")
+		cmdutil.Info("falling back to interactive paste (use --from-browser / --profile to pin)")
 		return promptCookiePaste()
 	}
 }
 
-// readBrowserCookies runs kooky against the named browser (or all
-// browsers when name == ""). On success returns the formatted cookie
-// header and a friendly source description. On no-cookies-found returns
-// an empty string and a non-nil error if `hardError` is false (caller
-// will treat as soft miss); when `hardError` is true the error is
-// surfaced verbatim.
-func readBrowserCookies(browser string, softMiss bool) (cookieHeader, source string, err error) {
+// readBrowserCookies runs kooky against the named browser/profile (both
+// optional — empty string means "any"). softMiss controls whether the
+// "no cookies found" path returns an error (false → silently miss for
+// auto-detect fallthrough; true → return the error verbatim).
+//
+// On success it prints the chosen (browser, profile, source) and any
+// alternatives so the user knows what auto-detect picked AND what
+// other profiles are available.
+func readBrowserCookies(browser, profile string, softMiss bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	res, err := browsercookies.Load(ctx, browser, "x.com")
+	res, err := browsercookies.Load(ctx, browser, profile, "x.com")
 	if err != nil {
 		if softMiss {
-			return "", "", err
+			return "", err
 		}
-		if browser != "" {
-			return "", "", fmt.Errorf("--from-browser %s: %w", browser, err)
+		switch {
+		case browser != "" && profile != "":
+			return "", fmt.Errorf("--from-browser %s --profile %q: %w", browser, profile, err)
+		case browser != "":
+			return "", fmt.Errorf("--from-browser %s: %w", browser, err)
+		case profile != "":
+			return "", fmt.Errorf("--profile %q: %w", profile, err)
 		}
-		return "", "", err
+		return "", err
 	}
 
 	raw := browsercookies.FormatCookieHeader(res.Cookies, cookieNamesWanted)
 	if raw == "" {
-		miss := fmt.Errorf("required cookies (auth_token, ct0) not in %s store — are you logged in?", res.Browser)
-		if softMiss {
-			return "", "", miss
-		}
-		return "", "", miss
+		return "", fmt.Errorf("required cookies (auth_token, ct0) not in %s/%s — are you logged in to x.com on that profile?", res.Browser, res.Profile)
 	}
-	return raw, fmt.Sprintf("%s (%s)", res.Browser, res.Source), nil
+
+	cmdutil.Success("using %s / %s (%s)", res.Browser, res.Profile, res.Source)
+	if len(res.Alternatives) > 0 {
+		cmdutil.Warn("also found x.com sessions in:")
+		for _, a := range res.Alternatives {
+			cmdutil.Warn("    %s / %s  (%d cookies)", a.Browser, a.Profile, a.Count)
+		}
+		cmdutil.Warn("re-run with --profile <name> if you want a different one")
+	}
+	return raw, nil
 }
 
 func promptCookiePaste() (string, error) {

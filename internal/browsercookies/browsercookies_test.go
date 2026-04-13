@@ -61,7 +61,7 @@ func TestFormatCookieHeaderNilSafe(t *testing.T) {
 func TestLoadNoBrowsersHere(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5_000_000_000)
 	defer cancel()
-	_, err := Load(ctx, "chrome", "x.com")
+	_, err := Load(ctx, "chrome", "", "x.com")
 	if err == nil {
 		// Some CI runners actually have a Chrome installed (Ubuntu image
 		// pulls google-chrome-stable). If so, we still expect zero cookies
@@ -71,7 +71,14 @@ func TestLoadNoBrowsersHere(t *testing.T) {
 }
 
 func TestLoadEmptyDomain(t *testing.T) {
-	_, err := Load(context.Background(), "chrome", "")
+	_, err := Load(context.Background(), "chrome", "", "")
+	if err == nil {
+		t.Error("expected error for empty domain")
+	}
+}
+
+func TestListEmptyDomain(t *testing.T) {
+	_, err := List(context.Background(), "")
 	if err == nil {
 		t.Error("expected error for empty domain")
 	}
