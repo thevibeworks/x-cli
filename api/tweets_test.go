@@ -318,6 +318,43 @@ func TestParseTweetTombstone(t *testing.T) {
 	}
 }
 
+func TestParseTweetLongformNoteTweet(t *testing.T) {
+	// Modern X Premium 25k-char tweets put the full body at
+	// note_tweet.note_tweet_results.result.text, NOT in legacy.full_text
+	// (which only carries the first ~280 chars + a `…` marker). ParseTweet
+	// must prefer note_tweet when present.
+	full := "This is the long version of the tweet that runs well past the legacy 280 char limit and would otherwise get truncated, but the modern client carries it in the note_tweet block where the full body lives intact for premium subscribers and similar account tiers."
+	raw := map[string]any{
+		"__typename": "Tweet",
+		"rest_id":    "999",
+		"core": map[string]any{
+			"user_results": map[string]any{
+				"result": map[string]any{
+					"rest_id": "u1",
+					"core":    map[string]any{"screen_name": "longposter", "name": "Long"},
+				},
+			},
+		},
+		"legacy": map[string]any{
+			"full_text": "This is the long version of the tweet that runs well past the legacy 280 char limit and would otherwise get truncated, but the modern…",
+		},
+		"note_tweet": map[string]any{
+			"note_tweet_results": map[string]any{
+				"result": map[string]any{
+					"text": full,
+				},
+			},
+		},
+	}
+	tw := ParseTweet(raw)
+	if tw == nil {
+		t.Fatal("nil")
+	}
+	if tw.Text != full {
+		t.Errorf("Text not from note_tweet:\n  got  %q\n  want %q", tw.Text, full)
+	}
+}
+
 func TestParseTweetMinimal(t *testing.T) {
 	raw := map[string]any{
 		"__typename": "Tweet",
