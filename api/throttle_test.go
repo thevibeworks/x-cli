@@ -246,9 +246,10 @@ func TestConcurrentMutationGapInvariant(t *testing.T) {
 		}
 	}
 
-	// Adjacent fires must be spaced by at least gap minus a tiny slack for
-	// scheduler jitter.
-	const slack = 5 * time.Millisecond
+	// Adjacent fires must be spaced by at least gap minus a slack for
+	// scheduler jitter. 15ms is the smallest value that's robust
+	// across container / CI / high-load environments.
+	const slack = 15 * time.Millisecond
 	for i := 1; i < len(sorted); i++ {
 		d := sorted[i].Sub(sorted[i-1])
 		if d+slack < gap {

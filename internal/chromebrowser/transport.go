@@ -28,6 +28,11 @@ func NewTransport() *Transport {
 	return &Transport{browser: New()}
 }
 
+// Browser returns the underlying Browser handle. Used by api.Client
+// to share one Chrome process between the Fetch path (this transport's
+// RoundTrip) and the DOM scraping path (api/domscrape.go).
+func (t *Transport) Browser() *Browser { return t.browser }
+
 // Close releases the Chrome process. Safe to call multiple times.
 func (t *Transport) Close() {
 	if t.browser != nil {

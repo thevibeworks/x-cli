@@ -71,7 +71,13 @@ func runSearchPosts(cmd *cobra.Command, args []string) error {
 	ctx, cancel := withTimeout(cmd.Context())
 	defer cancel()
 
-	tweets, err := client.SearchPosts(ctx, query, api.SearchOptions{
+	// SearchTimeline GraphQL endpoint enforces
+	// `x-client-transaction-id` and 404s without it. Use the DOM
+	// scraping fallback (navigate to /search?q=...&f=live, read
+	// article[data-testid=tweet] rows). Full tweet metrics aren't
+	// in the compact row — for those, grab the tweet ID and run
+	// `x tweets get <id>`.
+	tweets, err := client.SearchPostsDOM(ctx, query, api.SearchOptions{
 		Limit:       searchLimit,
 		Product:     searchProduct,
 		Since:       searchSince,
@@ -83,11 +89,6 @@ func runSearchPosts(cmd *cobra.Command, args []string) error {
 		Exclude:     searchExclude,
 		MinLikes:    searchMinLikes,
 		MinRetweets: searchMinRetweets,
-		OnPage: func(fetched, limit int) {
-			if !jsonOut && verbose {
-				cmdutil.Info("fetched %d/%d", fetched, limit)
-			}
-		},
 	})
 	if err != nil {
 		return err

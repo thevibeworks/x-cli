@@ -36,6 +36,15 @@ type Client struct {
 	throttle   *Throttle
 	httpClient *http.Client
 
+	// browser is the optional chromedp Browser handle. Set when the
+	// caller constructed the Client via UseBrowser=true. Exposed via
+	// Client.Browser() so domain code (domscrape.go) can run DOM
+	// extractors for endpoints the http+fetch path cannot reach
+	// (Followers, SearchTimeline — they require the opaque
+	// x-client-transaction-id header that only x.com's SPA knows
+	// how to compute).
+	browser *chromebrowser.Browser
+
 	sessionMu sync.RWMutex
 	session   Session
 
@@ -48,6 +57,11 @@ type Client struct {
 	// stderr. The Cookie header is never logged.
 	Verbose bool
 }
+
+// Browser returns the chromedp Browser handle if one was constructed
+// via UseBrowser=true, or nil otherwise. Used by domscrape.go to run
+// DOM extractors for endpoints that fail the GraphQL fetch path.
+func (c *Client) Browser() *chromebrowser.Browser { return c.browser }
 
 type Options struct {
 	Endpoints  *EndpointMap
@@ -63,6 +77,12 @@ type Options struct {
 	// /i/api/graphql/* path on x.com today). Ignored when
 	// HTTPClient is set explicitly.
 	UseBrowser bool
+
+	// browser is the Browser handle we keep hold of for the DOM
+	// scraping path. Not exported — the caller sets UseBrowser, we
+	// construct the Browser and stash it here for later use by
+	// domscrape.go. Unused when HTTPClient is set explicitly.
+	browser *chromebrowser.Browser
 }
 
 func New(opts Options) *Client {
@@ -73,8 +93,14 @@ func New(opts Options) *Client {
 			// Slower (1-2s startup, then 200-500ms per call) but
 			// passes Cloudflare Bot Management because it IS Chrome.
 			// See internal/chromebrowser for the full rationale.
+			//
+			// We stash the raw Browser handle on the Client so the
+			// DOM-scraping fallback path (domscrape.go) can use it
+			// directly without routing through the RoundTripper.
+			t := chromebrowser.NewTransport()
+			opts.browser = t.Browser()
 			opts.HTTPClient = &http.Client{
-				Transport: chromebrowser.NewTransport(),
+				Transport: t,
 				Timeout:   60 * time.Second,
 			}
 		default:
@@ -98,6 +124,7 @@ func New(opts Options) *Client {
 		endpoints:    opts.Endpoints,
 		throttle:     opts.Throttle,
 		httpClient:   opts.HTTPClient,
+		browser:      opts.browser,
 		session:      opts.Session,
 		userAgent:    opts.UserAgent,
 		retryBackoff: time.Second,

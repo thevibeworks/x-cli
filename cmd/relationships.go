@@ -205,8 +205,17 @@ func runRelationshipScrape(cmd *cobra.Command, args []string, kind relationshipK
 	)
 	switch kind {
 	case relationshipFollowers:
-		users, err = client.Followers(ctx, screen, opts)
+		// The Followers GraphQL endpoint requires the
+		// `x-client-transaction-id` header that only x.com's own JS
+		// knows how to compute. Direct GraphQL calls 404 on it. Use
+		// the DOM-scraping fallback (XActions' Puppeteer approach):
+		// navigate to /<user>/followers, let the SPA do the work,
+		// read the rendered [data-testid=UserCell] rows.
+		users, err = client.FollowersDOM(ctx, screen, opts)
 	case relationshipFollowing:
+		// Following works via the direct GraphQL path today — it
+		// doesn't enforce x-client-transaction-id. Use the faster
+		// fetch() path.
 		users, err = client.Following(ctx, screen, opts)
 	}
 	if err != nil {

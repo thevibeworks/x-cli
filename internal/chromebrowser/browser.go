@@ -28,6 +28,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/runtime"
@@ -296,4 +297,125 @@ func (b *Browser) Fetch(ctx context.Context, method, url string, headers, cookie
 // returns a Promise that should be awaited before returning.
 func withAwaitPromise(p *runtime.EvaluateParams) *runtime.EvaluateParams {
 	return p.WithAwaitPromise(true)
+}
+
+// ScrapeOptions configures Browser.Scrape.
+type ScrapeOptions struct {
+	// URL is the page to navigate to.
+	URL string
+
+	// WaitSelector is a CSS selector that must appear before we run
+	// the extractor. Usually "[data-testid=UserCell]" or
+	// "article[data-testid=tweet]". Use this to avoid racing the
+	// SPA hydration.
+	WaitSelector string
+
+	// Extractor is a JS expression (not a function declaration) that
+	// reads the DOM and returns a value. It will be wrapped in an
+	// IIFE and the result JSON-stringified before crossing the CDP
+	// boundary. Must NOT call fetch() or mutate storage — this is
+	// pure read-off-the-page logic.
+	Extractor string
+
+	// ScrollCount is how many times to scroll-to-bottom and re-run
+	// the extractor to paginate the SPA's virtual scroll. Each scroll
+	// adds ~20 rows. Pass 0 for a single read (no scroll).
+	ScrollCount int
+
+	// ScrollDelay is how long to wait between scroll-and-rerun
+	// cycles. Defaults to 1500ms. Too short → SPA doesn't hydrate
+	// the new rows. Too long → wasted clock time.
+	ScrollDelay time.Duration
+
+	// Cookies are pushed into the browser jar before navigation.
+	// Same semantics as Fetch.
+	Cookies map[string]string
+}
+
+// Scrape navigates to an x.com page, waits for content to hydrate,
+// and runs a JS extractor repeatedly while scrolling to load more
+// rows. Returns the last extractor result (which should accumulate
+// rows from previous runs) as raw JSON bytes.
+//
+// Unlike Fetch, this path does NOT try to call the GraphQL API
+// directly. It lets the SPA do the calls (including the opaque
+// x-client-transaction-id header that blocks direct calls to
+// Followers and SearchTimeline) and reads the rendered DOM.
+//
+// Caveats:
+//   - SPA hydration takes 2-5 seconds per page. Slower than Fetch.
+//   - Selectors are tied to x.com's current UI. Break on redesign.
+//   - No rate limit feedback — the browser's own limits apply.
+//   - Output is the LAST extractor run, not a concatenation. The
+//     extractor is responsible for accumulating rows across scrolls
+//     (reading the full DOM each call, not just new rows).
+func (b *Browser) Scrape(ctx context.Context, opts ScrapeOptions) ([]byte, error) {
+	if opts.URL == "" {
+		return nil, fmt.Errorf("chromebrowser.Scrape: URL required")
+	}
+	if opts.Extractor == "" {
+		return nil, fmt.Errorf("chromebrowser.Scrape: Extractor required")
+	}
+	if opts.ScrollDelay == 0 {
+		opts.ScrollDelay = 1500 * time.Millisecond
+	}
+
+	b.mu.Lock()
+	if err := b.start(); err != nil {
+		b.mu.Unlock()
+		return nil, err
+	}
+	b.mu.Unlock()
+
+	cookieParams := make([]*network.CookieParam, 0, len(opts.Cookies))
+	for name, value := range opts.Cookies {
+		if value == "" {
+			continue
+		}
+		cookieParams = append(cookieParams, &network.CookieParam{
+			Name:   name,
+			Value:  value,
+			Domain: ".x.com",
+			Path:   "/",
+			Secure: true,
+		})
+	}
+
+	// Wrap the extractor in an IIFE that JSON-stringifies the result.
+	// This is what crosses the CDP boundary — CDP serializes
+	// JavaScript values using its own rules that don't match JSON,
+	// so we stringify ourselves.
+	wrapped := fmt.Sprintf(`JSON.stringify((function(){ return %s; })())`, opts.Extractor)
+
+	waitSelector := opts.WaitSelector
+	if waitSelector == "" {
+		waitSelector = "body"
+	}
+
+	// Navigate + wait for hydration.
+	actions := []chromedp.Action{
+		network.SetCookies(cookieParams),
+		chromedp.Navigate(opts.URL),
+		chromedp.WaitVisible(waitSelector, chromedp.ByQuery),
+	}
+
+	var raw string
+	actions = append(actions,
+		chromedp.Evaluate(wrapped, &raw, chromedp.EvalAsValue),
+	)
+	if err := chromedp.Run(b.ctx, actions...); err != nil {
+		return nil, fmt.Errorf("scrape navigate: %w", err)
+	}
+
+	// Scroll-to-load-more loop.
+	for i := 0; i < opts.ScrollCount; i++ {
+		if err := chromedp.Run(b.ctx,
+			chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
+			chromedp.Sleep(opts.ScrollDelay),
+			chromedp.Evaluate(wrapped, &raw, chromedp.EvalAsValue),
+		); err != nil {
+			return nil, fmt.Errorf("scrape scroll loop: %w", err)
+		}
+	}
+	return []byte(raw), nil
 }
