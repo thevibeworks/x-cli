@@ -148,13 +148,23 @@ type PageOptions struct {
 }
 
 // Followers scrapes the followers of `screenName`. Requires authentication.
+//
+// Variables match the modern web client (April 2026 capture):
+// `withGrokTranslatedBio: true` is required — without it x.com returns
+// 404 with an empty body (the gateway treats the missing var as an
+// unknown query).
 func (c *Client) Followers(ctx context.Context, screenName string, opts PageOptions) ([]*UserSummary, error) {
 	uid, err := c.resolveUserID(ctx, screenName)
 	if err != nil {
 		return nil, err
 	}
 	return c.scrapeUserList(ctx, "Followers",
-		map[string]any{"userId": uid, "count": 20, "includePromotedContent": false},
+		map[string]any{
+			"userId":                 uid,
+			"count":                  20,
+			"includePromotedContent": false,
+			"withGrokTranslatedBio":  true,
+		},
 		opts,
 		"data", "user", "result", "timeline", "timeline", "instructions")
 }
@@ -166,7 +176,12 @@ func (c *Client) Following(ctx context.Context, screenName string, opts PageOpti
 		return nil, err
 	}
 	return c.scrapeUserList(ctx, "Following",
-		map[string]any{"userId": uid, "count": 20, "includePromotedContent": false},
+		map[string]any{
+			"userId":                 uid,
+			"count":                  20,
+			"includePromotedContent": false,
+			"withGrokTranslatedBio":  true,
+		},
 		opts,
 		"data", "user", "result", "timeline", "timeline", "instructions")
 }

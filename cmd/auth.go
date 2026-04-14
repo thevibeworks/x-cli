@@ -145,7 +145,11 @@ func runAuthImport(cmd *cobra.Command, _ []string) error {
 	}
 
 	cookies := api.ParseCookieString(raw)
-	if err := api.RequireAuthCookies(cookies); err != nil {
+	// In the browser path, ct0 is optional — chromebrowser fetches a
+	// fresh one from x.com via Set-Cookie on the first navigation.
+	// In the http path, ct0 is mandatory because the http transport
+	// has no way to mint one.
+	if err := api.RequireAuthCookiesFor(cookies, useHTTP); err != nil {
 		return err
 	}
 

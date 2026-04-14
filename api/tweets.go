@@ -433,10 +433,14 @@ func (c *Client) UserTweets(ctx context.Context, screenName string, opts Timelin
 	if err != nil {
 		return nil, err
 	}
+	// `includePromotedContent: true` matches the live web client.
+	// Sending false used to work but no longer does — the gateway
+	// returns a different schema variant. UserTweets in particular is
+	// strict about this flag.
 	return c.scrapeUserTimeline(ctx, "UserTweets", map[string]any{
 		"userId":                                 userID,
 		"count":                                  20,
-		"includePromotedContent":                 false,
+		"includePromotedContent":                 true,
 		"withQuickPromoteEligibilityTweetFields": true,
 		"withVoice":                              true,
 	}, opts)

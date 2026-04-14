@@ -25,9 +25,22 @@ bases:
 # twikit and twitter-scraper. Rotate if X revokes it.
 bearer: "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 
-# GraphQL features blob captured from the live web client. Must match
-# what the gateway expects at the time of the bundle. If the server
-# rejects a query with a "feature error", append the missing key here.
+# Default GraphQL features blob — the "timeline" set captured from
+# Followers/Following/SearchTimeline/UserTweets/BlueVerifiedFollowers
+# requests in the live web client. Profile-page ops (UserByScreenName,
+# UserByRestId) use their own override under the per-op features key
+# because they need a different set (see below).
+#
+# Profile-only keys NOT included here:
+#   hidden_profile_subscriptions_enabled
+#   subscriptions_verification_info_is_identity_verified_enabled
+#   subscriptions_verification_info_verified_since_enabled
+#   highlights_tweets_tab_ui_enabled
+#   responsive_web_twitter_article_notes_tab_enabled
+#   subscriptions_feature_can_gift_premium
+#
+# Adding them here breaks Followers/SearchTimeline (the gateway returns
+# 404 with empty body when an op receives features it doesn't expect).
 features:
   rweb_video_screen_enabled: false
   profile_label_improvements_pcf_label_in_post_enabled: true
@@ -65,12 +78,6 @@ features:
   responsive_web_grok_imagine_annotation_enabled: true
   responsive_web_grok_community_note_auto_translation_is_enabled: true
   responsive_web_enhance_cards_enabled: false
-  hidden_profile_subscriptions_enabled: true
-  subscriptions_verification_info_is_identity_verified_enabled: true
-  subscriptions_verification_info_verified_since_enabled: true
-  highlights_tweets_tab_ui_enabled: true
-  responsive_web_twitter_article_notes_tab_enabled: true
-  subscriptions_feature_can_gift_premium: true
 
 # GraphQL queries and mutations.
 #
@@ -85,6 +92,24 @@ graphql:
     kind: read
     rps: 0.5
     burst: 2
+    # Profile-specific features blob. Different from the global
+    # "timeline" set: includes hidden_profile_subscriptions and
+    # subscriptions_verification_info_* which the timeline ops
+    # reject as unknown.
+    features:
+      hidden_profile_subscriptions_enabled: true
+      profile_label_improvements_pcf_label_in_post_enabled: true
+      responsive_web_profile_redirect_enabled: false
+      rweb_tipjar_consumption_enabled: false
+      verified_phone_label_enabled: false
+      subscriptions_verification_info_is_identity_verified_enabled: true
+      subscriptions_verification_info_verified_since_enabled: true
+      highlights_tweets_tab_ui_enabled: true
+      responsive_web_twitter_article_notes_tab_enabled: true
+      subscriptions_feature_can_gift_premium: true
+      creator_subscriptions_tweet_preview_api_enabled: true
+      responsive_web_graphql_skip_user_profile_image_extensions_enabled: false
+      responsive_web_graphql_timeline_navigation_enabled: true
   UserByRestId:
     queryId: VQfQ9wwYdk6j_u2O4vt64Q
     operationName: UserByRestId
@@ -128,7 +153,7 @@ graphql:
     rps: 0.3
     burst: 2
   Followers:
-    queryId: gC_lyAxZOptAMLCJX5UhWw
+    queryId: "-WcGoRt8IQuPm-l1ymgy6g"
     operationName: Followers
     kind: read
     rps: 0.2

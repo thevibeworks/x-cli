@@ -334,14 +334,18 @@ func (c *Client) mergeSetCookies(resp *http.Response) {
 // logRequest prints a one-line summary of an HTTP request to stderr if
 // Verbose is on. The query string is stripped because it carries the
 // GraphQL `variables` blob which can include user-controlled IDs that
-// are uninteresting noise. The Cookie header is never logged regardless
-// of verbosity — the only place we ever read it is applyHeaders.
+// are uninteresting noise — unless X_CLI_FULL_URL is set, in which
+// case we print the whole thing for debugging rotation drift. The
+// Cookie header is never logged regardless of verbosity — the only
+// place we ever read it is applyHeaders.
 func (c *Client) logRequest(method, rawURL string, status int, dur time.Duration, err error) {
 	if !c.Verbose {
 		return
 	}
-	if i := strings.IndexByte(rawURL, '?'); i > 0 {
-		rawURL = rawURL[:i] + "?…"
+	if os.Getenv("X_CLI_FULL_URL") == "" {
+		if i := strings.IndexByte(rawURL, '?'); i > 0 {
+			rawURL = rawURL[:i] + "?…"
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "» %s %s → ERROR (%s): %v\n", method, rawURL, dur.Round(time.Millisecond), err)
@@ -398,7 +402,16 @@ func (c *Client) GraphQL(ctx context.Context, name string, variables map[string]
 	if err != nil {
 		return err
 	}
-	featsJSON, err := json.Marshal(c.endpoints.Features)
+	// Per-op features override the global blob when present. Each
+	// GraphQL operation expects a specific feature set; using one
+	// global blob with the union of all keys causes the gateway to
+	// 404 the request (it treats unknown-for-this-op features as a
+	// schema mismatch).
+	featuresMap := c.endpoints.Features
+	if ep.Features != nil {
+		featuresMap = ep.Features
+	}
+	featsJSON, err := json.Marshal(featuresMap)
 	if err != nil {
 		return err
 	}

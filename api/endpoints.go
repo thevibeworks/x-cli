@@ -28,6 +28,15 @@ type GraphQLEndpoint struct {
 	Kind          string  `yaml:"kind"`
 	RPS           float64 `yaml:"rps"`
 	Burst         int     `yaml:"burst"`
+
+	// Features is the per-operation features blob. When non-nil it
+	// REPLACES the global EndpointMap.Features for this op. Different
+	// X GraphQL operations expect different feature sets — passing a
+	// "union of everything" blob causes the gateway to 404 the
+	// request (it treats unknown features as a schema mismatch).
+	// Capture the per-op set from the live web client and put it
+	// here when an op stops working after a rotation.
+	Features map[string]bool `yaml:"features,omitempty"`
 }
 
 type RESTEndpoint struct {

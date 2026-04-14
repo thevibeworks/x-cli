@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 )
@@ -48,12 +49,28 @@ func ParseCookieString(s string) map[string]string {
 	return out
 }
 
-// RequireAuthCookies returns an AuthError if the required cookies are absent.
+// RequireAuthCookies returns an AuthError if the required cookies are
+// absent. `auth_token` is mandatory always. `ct0` is mandatory ONLY for
+// the http+utls transport — when the browser transport is in use, the
+// browser fetches a fresh ct0 from x.com on the first navigation, so
+// the caller can pass auth_token alone and let chromebrowser do the
+// rest.
+//
+// The caller signals which transport is in play via the boolean.
+// `false` (browser path) accepts an empty ct0; `true` (http path)
+// requires it.
 func RequireAuthCookies(cookies map[string]string) error {
+	return RequireAuthCookiesFor(cookies, true)
+}
+
+// RequireAuthCookiesFor is the explicit form. Pass needCt0 = false if
+// the caller will go through the browser transport (which can mint
+// ct0 on the fly via Set-Cookie from x.com).
+func RequireAuthCookiesFor(cookies map[string]string, needCt0 bool) error {
 	if cookies["auth_token"] == "" {
 		return &AuthError{Msg: "missing auth_token cookie"}
 	}
-	if cookies["ct0"] == "" {
+	if needCt0 && cookies["ct0"] == "" {
 		return &AuthError{Msg: "missing ct0 (CSRF) cookie"}
 	}
 	return nil
@@ -66,41 +83,76 @@ func RequireAuthCookies(cookies map[string]string) error {
 // (returns 404 as of April 2026). x-cli reads the `twid` cookie that
 // the user pasted, parses the numeric user id out of it, and calls
 // UserByRestId to confirm the session is alive AND fetch identity in
-// one round trip. Falls back to a UserByScreenName "twitter" probe if
-// `twid` is missing — that's the cheapest "is this cookie usable at
-// all" sanity check we have without it.
+// one round trip.
+//
+// When the user only provided `auth_token` (no twid — typical when
+// pasting from DevTools or when going through chromebrowser without
+// a stored twid), VerifyCredentials makes a cheap probe call. The
+// browser transport navigates to x.com on the first request, x.com
+// Set-Cookie's a fresh twid (and ct0, gt, etc.), the transport
+// surfaces those cookies back via Set-Cookie response headers, and
+// client.mergeSetCookies folds them into the session. We then
+// re-read twid and retry UserByRestId.
 func (c *Client) VerifyCredentials(ctx context.Context) (*User, error) {
-	c.sessionMu.RLock()
-	cookies := c.session.Cookies
-	twidRaw := ""
-	if cookies != nil {
-		twidRaw = cookies["twid"]
-	}
-	c.sessionMu.RUnlock()
-
-	if userID := parseTwidUserID(twidRaw); userID != "" {
-		p, err := c.GetProfileByID(ctx, userID)
-		if err != nil {
-			return nil, normaliseAuthError(err)
-		}
-		u := &User{
-			ID:       p.RestID,
-			Username: p.ScreenName,
-			Name:     p.Name,
-		}
-		c.sessionMu.Lock()
-		c.session.User = u
-		c.sessionMu.Unlock()
-		return u, nil
+	if user, err := c.verifyByTwid(ctx); err == nil {
+		return user, nil
+	} else if !isMissingTwid(err) {
+		return nil, err
 	}
 
-	// No twid: probe with a known account so we still detect a dead
-	// cookie, but we cannot return identity in this branch.
+	// No twid yet. Run any cheap GraphQL call to make the browser
+	// transport navigate to x.com — that's what triggers the
+	// Set-Cookie response that populates twid + ct0 in the session.
 	if _, err := c.GetProfile(ctx, "twitter"); err != nil {
 		return nil, normaliseAuthError(err)
 	}
-	return nil, &AuthError{Msg: "session is alive but `twid` cookie missing — re-import a complete cookie string"}
+
+	// After the probe, the session should now have twid (merged in
+	// via mergeSetCookies). Retry the proper verify.
+	user, err := c.verifyByTwid(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("after probe: %w", err)
+	}
+	return user, nil
 }
+
+// verifyByTwid is the "have-twid" branch of VerifyCredentials. Returns
+// errMissingTwid when no usable twid is present, or any other error
+// from the underlying UserByRestId call.
+func (c *Client) verifyByTwid(ctx context.Context) (*User, error) {
+	c.sessionMu.RLock()
+	twidRaw := ""
+	if c.session.Cookies != nil {
+		twidRaw = c.session.Cookies["twid"]
+	}
+	c.sessionMu.RUnlock()
+
+	userID := parseTwidUserID(twidRaw)
+	if userID == "" {
+		return nil, errMissingTwid
+	}
+	p, err := c.GetProfileByID(ctx, userID)
+	if err != nil {
+		return nil, normaliseAuthError(err)
+	}
+	u := &User{
+		ID:       p.RestID,
+		Username: p.ScreenName,
+		Name:     p.Name,
+	}
+	c.sessionMu.Lock()
+	c.session.User = u
+	c.sessionMu.Unlock()
+	return u, nil
+}
+
+// errMissingTwid is the sentinel returned by verifyByTwid when no
+// usable twid cookie is present in the session. VerifyCredentials
+// uses isMissingTwid to detect it and trigger the probe-then-retry
+// path.
+var errMissingTwid = &AuthError{Msg: "twid cookie not yet present — probe needed"}
+
+func isMissingTwid(err error) bool { return err == errMissingTwid }
 
 // parseTwidUserID extracts the numeric user ID from a `twid` cookie value.
 // Twitter encodes it as `u%3D<NNN>` (URL-encoded `u=NNN`).

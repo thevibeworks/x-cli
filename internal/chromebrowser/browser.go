@@ -25,6 +25,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/chromedp/cdproto/network"
@@ -55,6 +57,17 @@ func New() *Browser { return &Browser{} }
 
 // start launches the Chrome process. Idempotent — safe to call from
 // multiple Fetch entries; second-and-later calls are no-ops.
+//
+// Environment overrides (useful in containers / CI):
+//
+//	X_CLI_CHROME_PATH  — absolute path to a chromium binary. Required
+//	                     when the system Chrome isn't on $PATH (e.g.
+//	                     a playwright-installed chromium in
+//	                     ~/.cache/ms-playwright/...).
+//	X_CLI_CHROME_NO_SANDBOX — set to "1" / "true" to add
+//	                          --no-sandbox. Required for headless
+//	                          chromium inside an unprivileged
+//	                          container.
 func (b *Browser) start() error {
 	if b.started {
 		return nil
@@ -72,6 +85,15 @@ func (b *Browser) start() error {
 		chromedp.UserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
 		chromedp.WindowSize(1280, 800),
 	)
+	if p := os.Getenv("X_CLI_CHROME_PATH"); p != "" {
+		opts = append(opts, chromedp.ExecPath(p))
+	}
+	if v := os.Getenv("X_CLI_CHROME_NO_SANDBOX"); v == "1" || v == "true" {
+		opts = append(opts,
+			chromedp.NoSandbox,
+			chromedp.Flag("disable-dev-shm-usage", true),
+		)
+	}
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	b.allocCancel = allocCancel
@@ -90,6 +112,40 @@ func (b *Browser) start() error {
 	}
 	b.started = true
 	return nil
+}
+
+// Cookies reads the current browser cookie jar for `domain` (e.g.
+// "x.com") via CDP Network.GetCookies. Returns a flat name → value
+// map. Used by the Transport to expose the jar back to api.Client
+// through Set-Cookie response headers so the existing
+// client.go mergeSetCookies path folds freshly-issued ct0 / twid /
+// gt cookies into the in-memory Session.
+//
+// Returns an empty map (not an error) when the browser hasn't been
+// started yet — the jar is empty, so there's nothing to do.
+func (b *Browser) Cookies(ctx context.Context, domain string) (map[string]string, error) {
+	b.mu.Lock()
+	if !b.started {
+		b.mu.Unlock()
+		return map[string]string{}, nil
+	}
+	b.mu.Unlock()
+
+	url := "https://" + domain + "/"
+	var raw []*network.Cookie
+	err := chromedp.Run(b.ctx, chromedp.ActionFunc(func(c context.Context) error {
+		var err error
+		raw, err = network.GetCookies().WithURLs([]string{url}).Do(c)
+		return err
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("read browser cookie jar: %w", err)
+	}
+	out := make(map[string]string, len(raw))
+	for _, c := range raw {
+		out[c.Name] = c.Value
+	}
+	return out, nil
 }
 
 // Close terminates the Chrome process. Safe to call on a never-started
@@ -142,7 +198,27 @@ func (b *Browser) Fetch(ctx context.Context, method, url string, headers, cookie
 		})
 	}
 
-	headersJSON, err := json.Marshal(headers)
+	// We deliberately strip x-csrf-token from the caller-supplied
+	// headers because the browser is the source of truth here.
+	// The in-page JS below reads `ct0` from document.cookie at fetch
+	// time and injects it as x-csrf-token. This is what x.com's own
+	// web client does and it's how XActions' Puppeteer path works
+	// without the user ever pasting ct0 — the browser fetches a
+	// fresh ct0 from x.com via Set-Cookie on the initial navigate
+	// and then keeps using whatever the server most recently issued.
+	cleanHeaders := make(map[string]string, len(headers))
+	for k, v := range headers {
+		switch {
+		case strings.EqualFold(k, "x-csrf-token"):
+			continue
+		case strings.EqualFold(k, "Cookie"):
+			continue
+		default:
+			cleanHeaders[k] = v
+		}
+	}
+
+	headersJSON, err := json.Marshal(cleanHeaders)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -151,26 +227,44 @@ func (b *Browser) Fetch(ctx context.Context, method, url string, headers, cookie
 	// and Cloudflare clearance. We navigate to robots.txt first
 	// (lightweight, real x.com origin, served by the same Cloudflare
 	// edge so any challenge cookies get set as a side effect).
+	//
+	// The fetch wrapper does three things:
+	//   1. Reads the current ct0 from document.cookie. The browser
+	//      will have populated this from the navigate's Set-Cookie
+	//      response, even if the caller only passed auth_token.
+	//   2. Builds the final headers map by merging caller headers
+	//      with `x-csrf-token: <fresh ct0>`.
+	//   3. Sends the request with credentials:'include' so every
+	//      jar cookie (auth_token, ct0, gt, _twitter_sess, ...)
+	//      goes along.
 	js := fmt.Sprintf(`
 		(async () => {
 			try {
+				const ct0 = (document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/) || [])[1] || '';
+				const headers = Object.assign({}, %s);
+				if (ct0) headers['x-csrf-token'] = ct0;
 				const r = await fetch(%q, {
 					method: %q,
 					credentials: 'include',
-					headers: %s,
+					headers: headers,
 				});
 				const body = await r.text();
-				return JSON.stringify({status: r.status, body: body});
+				return JSON.stringify({status: r.status, body: body, ct0_present: !!ct0});
 			} catch (e) {
 				return JSON.stringify({status: 0, body: 'browser fetch error: ' + (e && e.message)});
 			}
 		})()
-	`, url, method, string(headersJSON))
+	`, string(headersJSON), url, method)
 
+	// Navigate to /i/release_notes — lightweight x.com page that
+	// gives us the auth_token+ct0+twid bootstrap without paying for
+	// a full SPA hydrate. We tested deeper pages (/home) and they
+	// don't change the per-op behavior — Followers/SearchTimeline
+	// 404 has a different cause than the navigate target.
 	var raw string
 	err = chromedp.Run(b.ctx,
 		network.SetCookies(cookieParams),
-		chromedp.Navigate("https://x.com/robots.txt"),
+		chromedp.Navigate("https://x.com/i/release_notes"),
 		chromedp.Evaluate(js, &raw, chromedp.EvalAsValue, withAwaitPromise),
 	)
 	if err != nil {
@@ -178,11 +272,22 @@ func (b *Browser) Fetch(ctx context.Context, method, url string, headers, cookie
 	}
 
 	var resp struct {
-		Status int    `json:"status"`
-		Body   string `json:"body"`
+		Status     int    `json:"status"`
+		Body       string `json:"body"`
+		Ct0Present bool   `json:"ct0_present"`
 	}
 	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
 		return 0, nil, fmt.Errorf("decode browser fetch result: %w", err)
+	}
+	if !resp.Ct0Present {
+		// Diagnostic: if x.com didn't issue a ct0 cookie, the
+		// upstream call will fail csrf-mismatch. Surface the cause
+		// in the body so callers can render a better error than
+		// "rejected session".
+		resp.Body = `{"errors":[{"message":"x.com did not return a ct0 cookie on navigation. Verify the auth_token is valid and Chrome reached x.com without a Cloudflare interstitial."}]}`
+		if resp.Status == 0 {
+			resp.Status = 401
+		}
 	}
 	return resp.Status, []byte(resp.Body), nil
 }

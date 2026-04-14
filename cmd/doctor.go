@@ -102,11 +102,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 
 func verifyLiveSession(ctx context.Context, eps *api.EndpointMap, sess *store.Session) error {
 	client := api.New(api.Options{
-		Endpoints: eps,
-		Throttle:  api.NewThrottle(api.Defaults{}),
-		Session:   api.Session{Cookies: sess.Cookies},
+		Endpoints:  eps,
+		Throttle:   api.NewThrottle(api.Defaults{}),
+		Session:    api.Session{Cookies: sess.Cookies},
+		UseBrowser: !useHTTP,
 	})
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	_, err := client.VerifyCredentials(ctx)
 	return err

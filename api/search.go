@@ -56,11 +56,14 @@ func (c *Client) SearchPosts(ctx context.Context, query string, opts SearchOptio
 	out := make([]*Tweet, 0, limit)
 
 	for len(out) < limit {
+		// withGrokTranslatedBio is required by the modern gateway.
+		// Sending it as `false` keeps the response shape compact.
 		vars := map[string]any{
-			"rawQuery":    rawQuery,
-			"count":       20,
-			"querySource": "typed_query",
-			"product":     product,
+			"rawQuery":              rawQuery,
+			"count":                 20,
+			"querySource":           "typed_query",
+			"product":               product,
+			"withGrokTranslatedBio": false,
 		}
 		if cursor != "" {
 			vars["cursor"] = cursor
@@ -107,10 +110,11 @@ func (c *Client) SearchUsers(ctx context.Context, query string, opts SearchOptio
 
 	for len(out) < limit {
 		vars := map[string]any{
-			"rawQuery":    query,
-			"count":       20,
-			"querySource": "typed_query",
-			"product":     "People",
+			"rawQuery":              query,
+			"count":                 20,
+			"querySource":           "typed_query",
+			"product":               "People",
+			"withGrokTranslatedBio": false,
 		}
 		if cursor != "" {
 			vars["cursor"] = cursor
