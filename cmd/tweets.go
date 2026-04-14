@@ -98,15 +98,59 @@ func renderTweetList(tweets []*api.Tweet) error {
 		return nil
 	}
 	for _, t := range tweets {
-		fmt.Fprintf(os.Stdout, "%-19s  %3sL %3sR %3sV  %s\n",
-			t.ID,
-			cmdutil.HumanCount(t.Metrics.Likes),
-			cmdutil.HumanCount(t.Metrics.Retweets),
-			cmdutil.HumanCount(t.Metrics.Views),
-			cmdutil.TruncateRunes(cmdutil.SingleLine(t.Text), 100),
-		)
+		fmt.Fprintln(os.Stdout, formatTweetRow(t))
 	}
 	return nil
+}
+
+// formatTweetRow renders one tweet as a single line for `tweets list`,
+// `search posts`, etc. Layout:
+//
+//	<id>  <L> <R> <Q> <V>  [marks]  <text>
+//
+// where marks is e.g. " [📷2]" / " [→quoted]" / " [↻RT]" depending on
+// what's attached. Text is the BEST available content:
+//
+//   - retweet  → original tweet's text (legacy.full_text gets cut to
+//                ~140 chars for retweets; we have the full body in
+//                RetweetOf.Text).
+//   - longform → note_tweet.text (already preferred by ParseTweet).
+//   - normal   → legacy.full_text.
+func formatTweetRow(t *api.Tweet) string {
+	text := t.Text
+	prefix := ""
+	if t.IsRetweet && t.RetweetOf != nil && t.RetweetOf.Text != "" {
+		prefix = "RT @" + t.RetweetOf.Author.Username + ": "
+		text = t.RetweetOf.Text
+	}
+
+	marks := ""
+	if t.IsReply {
+		marks += " ↳"
+	}
+	if t.Quoted != nil {
+		marks += " →q"
+	}
+	if n := len(t.Media); n > 0 {
+		switch t.Media[0].Type {
+		case "video":
+			marks += fmt.Sprintf(" 🎬%d", n)
+		case "animated_gif":
+			marks += fmt.Sprintf(" 🎞%d", n)
+		default:
+			marks += fmt.Sprintf(" 📷%d", n)
+		}
+	}
+
+	return fmt.Sprintf("%-19s  %4sL %4sR %4sQ %4sV %s  %s",
+		t.ID,
+		cmdutil.HumanCount(t.Metrics.Likes),
+		cmdutil.HumanCount(t.Metrics.Retweets),
+		cmdutil.HumanCount(t.Metrics.Quotes),
+		cmdutil.HumanCount(t.Metrics.Views),
+		marks,
+		cmdutil.TruncateRunes(cmdutil.SingleLine(prefix+text), 120),
+	)
 }
 
 func renderTweet(t *api.Tweet) error {

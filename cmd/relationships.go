@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
 	"github.com/thevibeworks/x-cli/api"
 	"github.com/thevibeworks/x-cli/internal/cmdutil"
 )
@@ -32,6 +33,35 @@ var followingCmd = &cobra.Command{
 	},
 }
 
+var likesCmd = &cobra.Command{
+	Use:   "likes <tweet-id|url>",
+	Short: "Scrape users who liked a tweet (Favoriters)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runScrapeLikers,
+}
+
+var retweetersCmd = &cobra.Command{
+	Use:   "retweeters <tweet-id|url>",
+	Short: "Scrape users who retweeted a tweet",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runScrapeRetweeters,
+}
+
+var nonfollowersCmd = &cobra.Command{
+	Use:   "nonfollowers <screen-name>",
+	Short: "Find accounts the user follows that don't follow back",
+	Long: `Scrapes both the followers and following lists, then takes the
+set difference: accounts in `+"`following`"+` that aren't in `+"`followers`"+`.
+This is XActions' most-asked feature ("who doesn't follow me back").
+
+Two GraphQL roundtrips per page on each list, so a fresh run on a
+~10k account takes a minute or two. The result is sorted by
+follower count desc — drop the high-value mutuals first if you
+plan to unfollow.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runScrapeNonFollowers,
+}
+
 type relationshipKind int
 
 const (
@@ -40,10 +70,116 @@ const (
 )
 
 func init() {
-	for _, c := range []*cobra.Command{followersCmd, followingCmd} {
+	for _, c := range []*cobra.Command{followersCmd, followingCmd, likesCmd, retweetersCmd, nonfollowersCmd} {
 		c.Flags().IntVarP(&relLimit, "limit", "n", 200, "max users to fetch")
 		rootCmd.AddCommand(c)
 	}
+}
+
+func runScrapeLikers(cmd *cobra.Command, args []string) error {
+	tweetID := extractTweetID(args[0])
+	if tweetID == "" {
+		return fmt.Errorf("could not extract tweet ID from %q", args[0])
+	}
+	client, err := newClient(cmd.Context())
+	if err != nil {
+		return err
+	}
+	ctx, cancel := withTimeout(cmd.Context())
+	defer cancel()
+	users, err := client.Likers(ctx, tweetID, api.PageOptions{
+		Limit: relLimit,
+		OnPage: func(fetched, limit int) {
+			if !jsonOut && verbose {
+				cmdutil.Info("fetched %d/%d", fetched, limit)
+			}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return cmdutil.PrintJSON(users)
+	}
+	return renderUserList(users)
+}
+
+func runScrapeRetweeters(cmd *cobra.Command, args []string) error {
+	tweetID := extractTweetID(args[0])
+	if tweetID == "" {
+		return fmt.Errorf("could not extract tweet ID from %q", args[0])
+	}
+	client, err := newClient(cmd.Context())
+	if err != nil {
+		return err
+	}
+	ctx, cancel := withTimeout(cmd.Context())
+	defer cancel()
+	users, err := client.Retweeters(ctx, tweetID, api.PageOptions{
+		Limit: relLimit,
+		OnPage: func(fetched, limit int) {
+			if !jsonOut && verbose {
+				cmdutil.Info("fetched %d/%d", fetched, limit)
+			}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return cmdutil.PrintJSON(users)
+	}
+	return renderUserList(users)
+}
+
+// runScrapeNonFollowers scrapes both the user's followers and following
+// lists, then returns following \ followers (set difference).
+//
+// Implementation note: we read the FULL following list (capped by
+// --limit) and the FULL followers list (also capped), then compute
+// the set difference in memory keyed by user ID. For users with
+// hundreds of thousands of followers, --limit is essentially
+// mandatory or both pulls take forever.
+func runScrapeNonFollowers(cmd *cobra.Command, args []string) error {
+	screen := strings.TrimPrefix(args[0], "@")
+	client, err := newClient(cmd.Context())
+	if err != nil {
+		return err
+	}
+	ctx, cancel := withTimeout(cmd.Context())
+	defer cancel()
+
+	cmdutil.Info("scraping %s's following list (cap: %d)...", screen, relLimit)
+	following, err := client.Following(ctx, screen, api.PageOptions{Limit: relLimit})
+	if err != nil {
+		return fmt.Errorf("following: %w", err)
+	}
+
+	cmdutil.Info("scraping %s's followers list (cap: %d)...", screen, relLimit)
+	followers, err := client.Followers(ctx, screen, api.PageOptions{Limit: relLimit})
+	if err != nil {
+		return fmt.Errorf("followers: %w", err)
+	}
+
+	followerSet := make(map[string]struct{}, len(followers))
+	for _, u := range followers {
+		followerSet[u.ID] = struct{}{}
+	}
+
+	nonback := make([]*api.UserSummary, 0, len(following))
+	for _, u := range following {
+		if _, ok := followerSet[u.ID]; !ok {
+			nonback = append(nonback, u)
+		}
+	}
+
+	cmdutil.Success("%d / %d accounts you follow do not follow back",
+		len(nonback), len(following))
+
+	if jsonOut {
+		return cmdutil.PrintJSON(nonback)
+	}
+	return renderUserList(nonback)
 }
 
 func runRelationshipScrape(cmd *cobra.Command, args []string, kind relationshipKind) error {

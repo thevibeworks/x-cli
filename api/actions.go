@@ -50,6 +50,45 @@ func (c *Client) FollowByUsername(ctx context.Context, screenName string) error 
 	return c.FollowUser(ctx, uid)
 }
 
+// LikeTweet favorites a tweet via the FavoriteTweet GraphQL mutation.
+// Idempotent: returns nil if X says "you have already favorited".
+func (c *Client) LikeTweet(ctx context.Context, tweetID string) error {
+	return c.graphqlMutation(ctx, "FavoriteTweet", map[string]any{"tweet_id": tweetID})
+}
+
+// UnlikeTweet unfavorites a tweet via UnfavoriteTweet.
+func (c *Client) UnlikeTweet(ctx context.Context, tweetID string) error {
+	return c.graphqlMutation(ctx, "UnfavoriteTweet", map[string]any{"tweet_id": tweetID})
+}
+
+// BookmarkTweet adds a bookmark via CreateBookmark.
+func (c *Client) BookmarkTweet(ctx context.Context, tweetID string) error {
+	return c.graphqlMutation(ctx, "CreateBookmark", map[string]any{"tweet_id": tweetID})
+}
+
+// UnbookmarkTweet removes a bookmark via DeleteBookmark.
+func (c *Client) UnbookmarkTweet(ctx context.Context, tweetID string) error {
+	return c.graphqlMutation(ctx, "DeleteBookmark", map[string]any{"tweet_id": tweetID})
+}
+
+// graphqlMutation runs a GraphQL mutation by name, parses the response
+// envelope, and routes idempotent successes / rate-limits / not-found
+// the same way classifyMutationErrors does for REST.
+//
+// Throttle accounting: GraphQL mutations go through Client.GraphQL
+// which already runs through the read token bucket. This is a
+// deliberate compromise — the dedicated mutation budget is tied to
+// the REST friendshipsCreate path. For per-op rate limits on like /
+// retweet / bookmark X enforces its own server-side caps; we observe
+// 429s via the throttle and back off.
+func (c *Client) graphqlMutation(ctx context.Context, name string, vars map[string]any) error {
+	var raw map[string]any
+	if err := c.GraphQL(ctx, name, vars, &raw); err != nil {
+		return err
+	}
+	return classifyMutationErrors(name, raw)
+}
+
 // restMutationCheckErrors wraps Client.REST and inspects the decoded body
 // for X's `errors[]` envelope. The envelope dispatch is:
 //

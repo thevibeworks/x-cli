@@ -158,6 +158,47 @@ graphql:
     rps: 0.2
     burst: 1
 
+  # GraphQL mutations — engagement actions. Query IDs cross-referenced
+  # from twikit and twitter-scraper. Marked as `mutation` so a future
+  # commit can route them through the per-mutation throttle (today
+  # they go through the read bucket via Client.graphqlMutation).
+  FavoriteTweet:
+    queryId: lI07N6Otwv1PhnEgXILM7A
+    operationName: FavoriteTweet
+    kind: mutation
+    rps: 0.1
+    burst: 1
+  UnfavoriteTweet:
+    queryId: ZYKSe-w7KEslx3JhSIk5LA
+    operationName: UnfavoriteTweet
+    kind: mutation
+    rps: 0.1
+    burst: 1
+  CreateRetweet:
+    queryId: ojPdsZsimiJrUGLR1sjUtA
+    operationName: CreateRetweet
+    kind: mutation
+    rps: 0.1
+    burst: 1
+  DeleteRetweet:
+    queryId: iQtK4dl5hBmXewYZuEOKVw
+    operationName: DeleteRetweet
+    kind: mutation
+    rps: 0.1
+    burst: 1
+  CreateBookmark:
+    queryId: aoDbu3RHznuiSkQ9aNM67Q
+    operationName: CreateBookmark
+    kind: mutation
+    rps: 0.1
+    burst: 1
+  DeleteBookmark:
+    queryId: Wlmlj2-xzyS1GN3a6cj-mQ
+    operationName: DeleteBookmark
+    kind: mutation
+    rps: 0.1
+    burst: 1
+
 # REST v1.1 endpoints used for follow/unfollow.
 #
 # NOTE: /1.1/account/verify_credentials.json was removed sometime

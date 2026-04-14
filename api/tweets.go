@@ -276,9 +276,22 @@ func parseTweetDepth(raw any, depth int) *Tweet {
 		id = getString(legacy, "id_str")
 	}
 
+	// Tweet body. For longform "note tweets" (X Premium 25k-char
+	// posts), the full text lives at
+	//   note_tweet.note_tweet_results.result.text
+	// while legacy.full_text only carries the first 280 chars +
+	// truncation marker. Read note_tweet first, fall back to legacy.
+	text := ""
+	if note := walkPathMap(tweet, "note_tweet", "note_tweet_results", "result"); note != nil {
+		text = getString(note, "text")
+	}
+	if text == "" {
+		text = getString(legacy, "full_text")
+	}
+
 	return &Tweet{
 		ID:        id,
-		Text:      getString(legacy, "full_text"),
+		Text:      text,
 		CreatedAt: parseTwitterDate(getString(legacy, "created_at")),
 		Author:    author,
 		Metrics:   metrics,
